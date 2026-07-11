@@ -13,7 +13,10 @@ Ensure this `frontend` folder is in a GitHub repo (root of the repo, or set **Ba
 3. If the repo root is `construction-saas`, set **Base directory** to `frontend`
 4. Build settings (auto-detected from `netlify.toml`):
    - **Build command:** `npm run build`
-   - **Plugin:** `@netlify/plugin-nextjs` (handles publish + SSR routes)
+   - **Publish directory:** `.next` (required — do not leave blank or set to `.`)
+   - **Plugin:** `@netlify/plugin-nextjs` (handles SSR routes)
+
+> **Important:** In Netlify UI → **Build & deploy** → **Continuous deployment**, set **Publish directory** to `.next` or clear it so `netlify.toml` wins. If publish equals the base directory (e.g. both `.` or both `frontend`), the build fails with: *"Your publish directory cannot be the same as the base directory"*.
 
 ## 3. Environment variables
 
@@ -64,6 +67,14 @@ HTTPS is automatic once DNS propagates (5–30 minutes).
 1. Open the Netlify URL → should redirect to `/login`
 2. Sign in against the live API
 3. Check browser DevTools → Network: API calls go to `NEXT_PUBLIC_API_BASE_URL`, not `localhost`
+
+## Troubleshooting
+
+| Error | Fix |
+|-------|-----|
+| Publish directory same as base directory | Set **Publish directory** to `.next` in Netlify UI, or rely on `netlify.toml` (`publish = ".next"`) |
+| CORS / API blocked | Add Netlify URL to backend `CORS_ALLOWED_ORIGINS` |
+| API calls go to localhost | Set `NEXT_PUBLIC_API_BASE_URL` in Netlify env vars and redeploy |
 
 ## Local vs production
 
