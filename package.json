@@ -21,7 +21,11 @@
     "recharts": "^3.9.2",
     "zustand": "latest"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "devDependencies": {
+    "@netlify/plugin-nextjs": "^5.11.4",
     "@eslint/eslintrc": "^3.3.5",
     "@tailwindcss/postcss": "latest",
     "@types/node": "latest",
