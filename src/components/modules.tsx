@@ -2241,7 +2241,9 @@ function PayrollManager() {
           >
             <div className="md:col-span-2">
               <h3 className="font-semibold text-coal">Generate salary for all labours</h3>
-              <p className="mt-1 text-xs text-gray-500">Creates or updates salary sheets for every worker for the selected month.</p>
+              <p className="mt-1 text-xs text-gray-500">
+                Creates the next unpaid period for every worker up to the till date. If salary was already generated through an earlier date in the month (e.g. 1–9), the new sheet starts from the next day.
+              </p>
             </div>
             <Field label="Month">
               <input className={inputClass} name="month" min="1" max="12" type="number" defaultValue={now.getMonth() + 1} required />
@@ -2349,6 +2351,9 @@ function PayrollManager() {
           >
             <div className="md:col-span-2">
               <h3 className="font-semibold text-coal">Generate salary for one worker</h3>
+              <p className="mt-1 text-xs text-gray-500">
+                Continues from the day after that worker&apos;s last generated period in the selected month.
+              </p>
             </div>
             <Field label="Labour">
               <select className={inputClass} name="labour" required>
