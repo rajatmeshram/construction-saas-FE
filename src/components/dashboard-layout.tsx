@@ -35,6 +35,8 @@ const PAGE_TITLES: Record<string, string> = {
   "/expenses": "Expenses",
   "/machinery": "Machinery",
   "/attendance": "Attendance",
+  "/attendance/bulk": "Bulk Attendance",
+  "/attendance/history": "Attendance Records",
   "/payroll": "Payroll",
   "/reports": "Reports",
   "/workers": "Labour",
@@ -45,10 +47,11 @@ const PAGE_TITLES: Record<string, string> = {
 
 function pageTitle(pathname: string) {
   if (pathname.startsWith("/projects/")) return "Project Detail";
+  if (pathname === "/attendance/bulk") return "Bulk Attendance";
   if (pathname === "/attendance/history") return "Attendance Records";
   if (pathname.startsWith("/attendance/")) return "Attendance Detail";
   if (pathname.startsWith("/workers/") && pathname.endsWith("/history")) return "Attendance History";
-  if (pathname.startsWith("/workers/") && pathname !== "/workers/bulk-attendance") return "Labour Profile";
+  if (pathname.startsWith("/workers/")) return "Labour Profile";
   if (pathname.startsWith("/machinery/") && pathname !== "/machinery") return "Machinery Detail";
   if (pathname.startsWith("/supervisors/")) return "Supervisor Profile";
   for (const [href, title] of Object.entries(PAGE_TITLES)) {

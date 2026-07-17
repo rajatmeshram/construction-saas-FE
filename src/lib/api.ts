@@ -1,5 +1,6 @@
 import { store } from "@/store";
 import { clearSession, setSession } from "@/store/auth-slice";
+import { buildListQuery } from "@/lib/pagination";
 import type {
   AttendanceRecord,
   AuthUser,
@@ -176,7 +177,7 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   dashboard: () => request<DashboardMetrics>("/projects/items/dashboard/"),
-  users: () => request<{ results?: AuthUser[] }>("/accounts/users/"),
+  users: () => request<{ results?: AuthUser[] }>(`/accounts/users/${buildListQuery()}`),
   labours: () => request<AuthUser[]>("/accounts/users/labours/"),
   supervisors: () => request<AuthUser[]>("/accounts/users/supervisors/"),
   createUser: (payload: {
@@ -187,12 +188,24 @@ export const api = {
     email: string;
     mobile_number: string;
     role: "SUPER_ADMIN" | "SUPERVISOR" | "LABOUR";
+    salary?: string;
+    daily_salary?: string | null;
   }) =>
     request<AuthUser>("/accounts/users/", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  projects: () => request<{ results?: Project[] }>("/projects/items/"),
+  deleteUser: (id: number) => request<void>(`/accounts/users/${id}/`, { method: "DELETE" }),
+  bulkDeleteSupervisors: (ids: number[]) =>
+    request<{
+      deleted_count: number;
+      skipped_count: number;
+      skipped: Array<{ id: number; error: string }>;
+    }>("/accounts/users/bulk_delete/", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
+  projects: () => request<{ results?: Project[] }>(`/projects/items/${buildListQuery()}`),
   project: (id: number) => request<Project>(`/projects/items/${id}/`),
   createProject: (payload: {
     name: string;
@@ -226,7 +239,7 @@ export const api = {
     }),
   tasks: (projectId?: number) =>
     request<{ results?: ProjectTask[] }>(
-      projectId ? `/projects/tasks/?project=${projectId}` : "/projects/tasks/",
+      `/projects/tasks/${buildListQuery({ project: projectId })}`,
     ),
   createTask: (payload: CreateTaskPayload) =>
     request<ProjectTask>("/projects/tasks/", {
@@ -245,7 +258,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   projectDocuments: (projectId: number) =>
-    request<{ results?: ProjectDocument[] }>(`/projects/documents/?project=${projectId}`),
+    request<{ results?: ProjectDocument[] }>(`/projects/documents/${buildListQuery({ project: projectId })}`),
   uploadProjectDocument: (payload: { project: number; title: string; file: File; description?: string }) => {
     const formData = new FormData();
     formData.append("project", String(payload.project));
@@ -260,7 +273,7 @@ export const api = {
     request<void>(`/projects/documents/${id}/`, { method: "DELETE" }),
   machineryUsage: (projectId?: number) =>
     request<{ results?: MachineryUsage[] }>(
-      projectId ? `/operations/machinery-usage/?project=${projectId}` : "/operations/machinery-usage/",
+      `/operations/machinery-usage/${buildListQuery({ project: projectId })}`,
     ),
   currentAttendance: () =>
     request<{ active: boolean; attendance?: AttendanceRecord }>("/attendance/records/current/"),
@@ -289,13 +302,12 @@ export const api = {
     return request<AttendanceRecord>("/attendance/records/punch_out/", { method: "POST", body: formData });
   },
   attendance: (projectId?: number, status?: AttendanceRecord["status"], labourId?: number) => {
-    const params = new URLSearchParams();
-    if (projectId) params.set("project", String(projectId));
-    if (status) params.set("status", status);
-    if (labourId) params.set("labour", String(labourId));
-    const query = params.toString();
     return request<{ results?: AttendanceRecord[] }>(
-      query ? `/attendance/records/?${query}` : "/attendance/records/",
+      `/attendance/records/${buildListQuery({
+        project: projectId,
+        status,
+        labour: labourId,
+      })}`,
     );
   },
   approveAttendance: (id: number, approval_status: "APPROVED" | "REJECTED", rejection_reason = "") =>
@@ -353,12 +365,13 @@ export const api = {
   markSalaryPaid: (id: number) =>
     request<Salary>(`/payroll/salaries/${id}/mark_paid/`, { method: "POST" }),
   salaries: (params?: { month?: number; year?: number; labour?: number }) => {
-    const query = new URLSearchParams();
-    if (params?.month) query.set("month", String(params.month));
-    if (params?.year) query.set("year", String(params.year));
-    if (params?.labour) query.set("labour", String(params.labour));
-    const suffix = query.toString() ? `?${query.toString()}` : "";
-    return request<{ results?: Salary[] }>(`/payroll/salaries/${suffix}`);
+    return request<{ results?: Salary[] }>(
+      `/payroll/salaries/${buildListQuery({
+        month: params?.month,
+        year: params?.year,
+        labour: params?.labour,
+      })}`,
+    );
   },
   exportSalaries: (params: { month: number; year: number }) => {
     const query = new URLSearchParams({
@@ -368,7 +381,7 @@ export const api = {
     return downloadRequest(`/payroll/salaries/export/?${query.toString()}`, `payroll_${params.year}_${String(params.month).padStart(2, "0")}.xlsx`);
   },
   salary: (id: number) => request<Salary>(`/payroll/salaries/${id}/`),
-  vendors: () => request<{ results?: Vendor[] }>("/operations/vendors/"),
+  vendors: () => request<{ results?: Vendor[] }>(`/operations/vendors/${buildListQuery()}`),
   createVendor: (payload: {
     name: string;
     gst_number: string;
@@ -381,13 +394,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  materials: () => request<{ results?: Material[] }>("/operations/materials/"),
+  materials: () => request<{ results?: Material[] }>(`/operations/materials/${buildListQuery()}`),
   createMaterial: (payload: { name: string; unit: string; low_stock_level: string }) =>
     request<Material>("/operations/materials/", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  materialStock: () => request<{ results?: MaterialStock[] }>("/operations/material-stock/"),
+  materialStock: () => request<{ results?: MaterialStock[] }>(`/operations/material-stock/${buildListQuery()}`),
   saveMaterialStock: (payload: {
     project: number;
     material: number;
@@ -419,7 +432,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  expenses: () => request<{ results?: Expense[] }>("/operations/expenses/"),
+  expenses: () => request<{ results?: Expense[] }>(`/operations/expenses/${buildListQuery()}`),
   createExpense: (payload: { project: number; amount: string; category: string; description: string }) =>
     request<Expense>("/operations/expenses/", {
       method: "POST",
@@ -427,13 +440,16 @@ export const api = {
     }),
   approveExpense: (id: number, action: "approve" | "reject") =>
     request<Expense>(`/operations/expenses/${id}/${action}/`, { method: "POST" }),
-  machinery: () => request<{ results?: Machinery[] }>("/operations/machinery/"),
+  machinery: () => request<{ results?: Machinery[] }>(`/operations/machinery/${buildListQuery()}`),
   machineryItem: (id: number) => request<Machinery>(`/operations/machinery/${id}/`),
   createMachinery: (payload: {
     name: string;
     machine_type: string;
     registration_number: string;
     vehicle_number?: string;
+    vehicle_class?: string;
+    chassis_number?: string;
+    engine_number?: string;
     insurance_provider?: string;
     insurance_policy_number?: string;
     insurance_start_date?: string;
@@ -441,6 +457,13 @@ export const api = {
     permit_number?: string;
     permit_issue_date?: string;
     permit_expiry_date?: string;
+    fitness_validity_date?: string;
+    puc_date?: string;
+    mv_tax_validity_date?: string;
+    green_tax_date?: string;
+    hsrp_done?: boolean;
+    avg_km_per_liter?: string;
+    avg_hours_per_liter?: string;
     notes?: string;
     active?: boolean;
     document_type?: string;
@@ -451,6 +474,9 @@ export const api = {
     formData.append("machine_type", payload.machine_type);
     formData.append("registration_number", payload.registration_number);
     if (payload.vehicle_number) formData.append("vehicle_number", payload.vehicle_number);
+    if (payload.vehicle_class) formData.append("vehicle_class", payload.vehicle_class);
+    if (payload.chassis_number) formData.append("chassis_number", payload.chassis_number);
+    if (payload.engine_number) formData.append("engine_number", payload.engine_number);
     if (payload.insurance_provider) formData.append("insurance_provider", payload.insurance_provider);
     if (payload.insurance_policy_number) formData.append("insurance_policy_number", payload.insurance_policy_number);
     if (payload.insurance_start_date) formData.append("insurance_start_date", payload.insurance_start_date);
@@ -458,6 +484,13 @@ export const api = {
     if (payload.permit_number) formData.append("permit_number", payload.permit_number);
     if (payload.permit_issue_date) formData.append("permit_issue_date", payload.permit_issue_date);
     if (payload.permit_expiry_date) formData.append("permit_expiry_date", payload.permit_expiry_date);
+    if (payload.fitness_validity_date) formData.append("fitness_validity_date", payload.fitness_validity_date);
+    if (payload.puc_date) formData.append("puc_date", payload.puc_date);
+    if (payload.mv_tax_validity_date) formData.append("mv_tax_validity_date", payload.mv_tax_validity_date);
+    if (payload.green_tax_date) formData.append("green_tax_date", payload.green_tax_date);
+    formData.append("hsrp_done", payload.hsrp_done ? "true" : "false");
+    if (payload.avg_km_per_liter) formData.append("avg_km_per_liter", payload.avg_km_per_liter);
+    if (payload.avg_hours_per_liter) formData.append("avg_hours_per_liter", payload.avg_hours_per_liter);
     if (payload.notes) formData.append("notes", payload.notes);
     formData.append("active", payload.active === false ? "false" : "true");
     if (payload.document_type) formData.append("document_type", payload.document_type);
@@ -475,6 +508,7 @@ export const api = {
     machinery: number;
     operator: string;
     hours_used: string;
+    km_used?: string;
     fuel_consumption: string;
     usage_date: string;
   }) =>
@@ -503,7 +537,7 @@ export const api = {
     payload.bill_photos?.forEach((file) => formData.append("bill_photos", file));
     return request<FuelLog>("/operations/fuel-logs/", { method: "POST", body: formData });
   },
-  fuelLogs: () => request<{ results?: FuelLog[] }>("/operations/fuel-logs/"),
+  fuelLogs: () => request<{ results?: FuelLog[] }>(`/operations/fuel-logs/${buildListQuery()}`),
   createMaintenance: (payload: { machinery: number; service_date: string; details: string; cost: string; next_service_due: string }) =>
     request("/operations/maintenance/", {
       method: "POST",
@@ -511,18 +545,18 @@ export const api = {
     }),
   maintenance: (machineryId?: number) =>
     request<{ results?: MachineryMaintenance[] }>(
-      machineryId ? `/operations/maintenance/?machinery=${machineryId}` : "/operations/maintenance/",
+      `/operations/maintenance/${buildListQuery({ machinery: machineryId })}`,
     ),
   reports: () => request<OperationsReport>("/operations/reports/"),
-  labourWorkers: (params?: { name?: string; mobile?: string; page?: number; ordering?: string }) => {
-    const search = new URLSearchParams();
-    if (params?.name) search.set("name", params.name);
-    if (params?.mobile) search.set("mobile", params.mobile);
-    if (params?.page) search.set("page", String(params.page));
-    if (params?.ordering) search.set("ordering", params.ordering);
-    const query = search.toString();
+  labourWorkers: (params?: { name?: string; mobile?: string; page?: number; page_size?: number; ordering?: string }) => {
     return request<{ count: number; next: string | null; previous: string | null; results: LabourProfile[] }>(
-      query ? `/labour/workers/?${query}` : "/labour/workers/",
+      `/labour/workers/${buildListQuery({
+        name: params?.name,
+        mobile: params?.mobile,
+        page: params?.page,
+        page_size: params?.page_size ?? 100,
+        ordering: params?.ordering,
+      })}`,
     );
   },
   labourWorker: (id: number) => request<LabourProfile>(`/labour/workers/${id}/`),
@@ -538,6 +572,7 @@ export const api = {
     full_name: string;
     mobile_number: string;
     salary: string;
+    daily_salary?: string | null;
     employee_id?: string;
     status?: "ACTIVE" | "INACTIVE";
     joining_date?: string;
@@ -555,6 +590,7 @@ export const api = {
       full_name: string;
       mobile_number: string;
       salary: string;
+      daily_salary: string | null;
       employee_id: string;
       status: "ACTIVE" | "INACTIVE";
       joining_date: string;
@@ -563,6 +599,16 @@ export const api = {
     request<LabourProfile>(`/labour/workers/${id}/`, {
       method: "PATCH",
       body: JSON.stringify(payload),
+    }),
+  deleteLabourWorker: (id: number) => request<void>(`/labour/workers/${id}/`, { method: "DELETE" }),
+  bulkDeleteLabourWorkers: (ids: number[]) =>
+    request<{
+      deleted_count: number;
+      skipped_count: number;
+      skipped: Array<{ id: number; error: string }>;
+    }>("/labour/workers/bulk_delete/", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
     }),
   importLabourWorkers: (file: File) => {
     const formData = new FormData();
@@ -589,7 +635,8 @@ export const api = {
     date: string;
     punch_in_time?: string;
     punch_out_time?: string;
-    attendance_mark: "PRESENT" | "ABSENT" | "HALF_DAY";
+    workday_value: number;
+    attendance_mark?: "PRESENT" | "ABSENT" | "HALF_DAY";
     extra_hours?: number;
     notes?: string;
   }) =>
@@ -603,7 +650,8 @@ export const api = {
     date: string;
     punch_in_time?: string;
     punch_out_time?: string;
-    attendance_mark: "PRESENT" | "ABSENT" | "HALF_DAY";
+    workday_value: number;
+    attendance_mark?: "PRESENT" | "ABSENT" | "HALF_DAY";
     extra_hours?: number;
     notes?: string;
   }) =>

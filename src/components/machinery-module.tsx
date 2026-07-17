@@ -13,11 +13,13 @@ import {
   DataTableHead,
   DataTableRow,
   FormRow,
+  TablePagination,
   btnPrimaryClass,
   btnSecondaryClass,
   inputClass,
 } from "@/components/ui";
 import { api } from "@/lib/api";
+import { useTablePage } from "@/lib/pagination";
 import type { Machinery, MachineryDocument } from "@/lib/types";
 
 function formatCurrency(value?: string | number | null) {
@@ -89,6 +91,11 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
     event.currentTarget.reset();
   }
 
+  const documents = machinery.data?.documents ?? [];
+  const maintenanceRows = maintenance.data?.results ?? [];
+  const docsPage = useTablePage(documents, { resetKey: machineryId });
+  const maintenancePage = useTablePage(maintenanceRows, { resetKey: machineryId });
+
   if (machinery.isLoading) {
     return <p className="rounded-lg border border-gray-200/80 bg-white p-4 text-sm text-gray-500 shadow-sm">Loading machinery...</p>;
   }
@@ -98,7 +105,6 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
   }
 
   const item = machinery.data;
-  const maintenanceRows = maintenance.data?.results ?? [];
 
   return (
     <section className="space-y-4">
@@ -129,6 +135,14 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
             <p className="mt-1 font-semibold">{item.registration_number || "—"}</p>
           </div>
           <div className="rounded-lg bg-gray-50 p-3">
+            <p className="text-[10px] font-bold uppercase text-gray-500">Vehicle class</p>
+            <p className="mt-1 font-semibold">{item.vehicle_class || "—"}</p>
+          </div>
+          <div className="rounded-lg bg-gray-50 p-3">
+            <p className="text-[10px] font-bold uppercase text-gray-500">HSRP</p>
+            <p className="mt-1 font-semibold">{item.hsrp_done ? "Done" : "Pending"}</p>
+          </div>
+          <div className="rounded-lg bg-gray-50 p-3">
             <p className="text-[10px] font-bold uppercase text-gray-500">Insurance expiry</p>
             <p className="mt-1 font-semibold">{formatDate(item.insurance_expiry_date)}</p>
             {item.insurance_expiry_date && (
@@ -140,7 +154,7 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
             )}
           </div>
           <div className="rounded-lg bg-gray-50 p-3">
-            <p className="text-[10px] font-bold uppercase text-gray-500">Permit expiry</p>
+            <p className="text-[10px] font-bold uppercase text-gray-500">Permit validity</p>
             <p className="mt-1 font-semibold">{formatDate(item.permit_expiry_date)}</p>
             {item.permit_expiry_date && (
               <div className="mt-1">
@@ -150,10 +164,47 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
               </div>
             )}
           </div>
+          <div className="rounded-lg bg-gray-50 p-3">
+            <p className="text-[10px] font-bold uppercase text-gray-500">Fitness validity</p>
+            <p className="mt-1 font-semibold">{formatDate(item.fitness_validity_date)}</p>
+            {item.fitness_validity_date && (
+              <div className="mt-1">
+                <Badge tone={expiryTone(item.fitness_validity_date)}>
+                  {expiryTone(item.fitness_validity_date) === "red" ? "Expired" : expiryTone(item.fitness_validity_date) === "amber" ? "Expiring soon" : "Valid"}
+                </Badge>
+              </div>
+            )}
+          </div>
+          <div className="rounded-lg bg-gray-50 p-3">
+            <p className="text-[10px] font-bold uppercase text-gray-500">PUC date</p>
+            <p className="mt-1 font-semibold">{formatDate(item.puc_date)}</p>
+            {item.puc_date && (
+              <div className="mt-1">
+                <Badge tone={expiryTone(item.puc_date)}>
+                  {expiryTone(item.puc_date) === "red" ? "Expired" : expiryTone(item.puc_date) === "amber" ? "Expiring soon" : "Valid"}
+                </Badge>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <Shield className="h-4 w-4 text-violet-600" />
+            <h2 className="text-sm font-semibold text-coal">Vehicle Identity</h2>
+          </div>
+          <dl className="mt-4 space-y-2 text-sm">
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Chassis no.</dt><dd className="font-medium">{item.chassis_number || "—"}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Engine no.</dt><dd className="font-medium">{item.engine_number || "—"}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Vehicle class</dt><dd className="font-medium">{item.vehicle_class || "—"}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">HSRP done</dt><dd className="font-medium">{item.hsrp_done ? "Yes" : "No"}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Avg km / liter</dt><dd className="font-medium">{item.avg_km_per_liter ? `${item.avg_km_per_liter} km/L` : "—"}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Avg hrs / liter</dt><dd className="font-medium">{item.avg_hours_per_liter ? `${item.avg_hours_per_liter} hrs/L` : "—"}</dd></div>
+          </dl>
+        </div>
+
         <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
           <div className="flex items-center gap-2">
             <Shield className="h-4 w-4 text-violet-600" />
@@ -174,8 +225,21 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
           </div>
           <dl className="mt-4 space-y-2 text-sm">
             <div className="flex justify-between gap-4"><dt className="text-gray-500">Permit number</dt><dd className="font-medium">{item.permit_number || "—"}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-gray-500">Issue date</dt><dd className="font-medium">{formatDate(item.permit_issue_date)}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-gray-500">Expiry date</dt><dd className="font-medium">{formatDate(item.permit_expiry_date)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Permit date</dt><dd className="font-medium">{formatDate(item.permit_issue_date)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Validity</dt><dd className="font-medium">{formatDate(item.permit_expiry_date)}</dd></div>
+          </dl>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <FileText className="h-4 w-4 text-violet-600" />
+            <h2 className="text-sm font-semibold text-coal">Tax & Fitness</h2>
+          </div>
+          <dl className="mt-4 space-y-2 text-sm">
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Fitness validity</dt><dd className="font-medium">{formatDate(item.fitness_validity_date)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">PUC date</dt><dd className="font-medium">{formatDate(item.puc_date)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">MV tax validity</dt><dd className="font-medium">{formatDate(item.mv_tax_validity_date)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Green tax date</dt><dd className="font-medium">{formatDate(item.green_tax_date)}</dd></div>
           </dl>
         </div>
       </div>
@@ -202,7 +266,7 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
             </tr>
           </DataTableHead>
           <DataTableBody>
-            {(item.documents ?? []).map((doc, i) => (
+            {docsPage.pageRows.map((doc, i) => (
               <DataTableRow key={doc.id} zebra={i % 2 === 1}>
                 <DataTableCell><Badge tone="violet">{docTypeLabel(doc.document_type)}</Badge></DataTableCell>
                 <DataTableCell className="font-medium text-gray-900">{doc.title || "—"}</DataTableCell>
@@ -218,6 +282,15 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
             ))}
           </DataTableBody>
         </DataTable>
+        <TablePagination
+          page={docsPage.page}
+          totalPages={docsPage.totalPages}
+          total={docsPage.total}
+          pageSize={docsPage.pageSize}
+          from={docsPage.from}
+          to={docsPage.to}
+          onPageChange={docsPage.setPage}
+        />
         {!item.documents?.length && <p className="px-4 py-6 text-center text-sm text-gray-500">No documents uploaded yet.</p>}
 
         <form onSubmit={submitDocuments} className="border-t border-gray-100 p-4">
@@ -258,7 +331,7 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
             </tr>
           </DataTableHead>
           <DataTableBody>
-            {maintenanceRows.map((row, i) => (
+            {maintenancePage.pageRows.map((row, i) => (
               <DataTableRow key={row.id} zebra={i % 2 === 1}>
                 <DataTableCell>{formatDate(row.service_date)}</DataTableCell>
                 <DataTableCell>{row.details}</DataTableCell>
@@ -268,6 +341,15 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
             ))}
           </DataTableBody>
         </DataTable>
+        <TablePagination
+          page={maintenancePage.page}
+          totalPages={maintenancePage.totalPages}
+          total={maintenancePage.total}
+          pageSize={maintenancePage.pageSize}
+          from={maintenancePage.from}
+          to={maintenancePage.to}
+          onPageChange={maintenancePage.setPage}
+        />
         {!maintenanceRows.length && <p className="px-4 py-6 text-center text-sm text-gray-500">No maintenance records yet.</p>}
       </div>
     </section>

@@ -6,6 +6,8 @@ export type AuthUser = {
   full_name: string;
   mobile_number: string;
   role: UserRole;
+  labour_profile_id?: number | null;
+  assigned_projects?: AssignedProject[];
 };
 
 export type DashboardMetrics = {
@@ -43,6 +45,7 @@ export type AttendanceRecord = {
   extra_hours?: number;
   entry_type?: "MOBILE" | "MANUAL" | "SUPERVISOR_SELF" | "BULK";
   attendance_mark?: "PRESENT" | "ABSENT" | "HALF_DAY";
+  workday_value?: number | string;
   notes?: string;
 };
 
@@ -62,6 +65,8 @@ export type LabourProfile = {
   email: string;
   employee_id: string | null;
   salary: string;
+  daily_salary: string | null;
+  resolved_daily_wage: string;
   status: "ACTIVE" | "INACTIVE";
   joining_date: string | null;
   assigned_projects: AssignedProject[];
@@ -108,9 +113,11 @@ export type SupervisorSummary = {
     username: string;
     email: string;
     role: string;
+    assigned_projects?: AssignedProject[];
   };
   attendance_stats: {
     total_present_days: number;
+    total_absent_days?: number;
     total_working_hours: number;
     pending_approvals: number;
   };
@@ -124,16 +131,8 @@ export type SupervisorSummary = {
     id: number;
     month: number;
     year: number;
-    period_start: string;
-    period_end: string;
-    working_days: string;
-    overtime_hours: string;
-    gross_pay: string;
-    advances: string;
-    deductions: string;
     net_pay: string;
-    payment_status: "PENDING" | "PAID";
-    paid_at: string | null;
+    gross_pay: string;
   }>;
 };
 
@@ -157,6 +156,7 @@ export type MonthlyAttendance = {
     {
       present: boolean;
       attendance_mark?: "PRESENT" | "ABSENT" | "HALF_DAY";
+      workday_value?: number;
       working_hours: number;
       approval_status: string;
       project_name: string;
@@ -260,8 +260,16 @@ export type MachineryUsage = {
   machinery_name: string;
   operator: string;
   hours_used: string;
+  km_used: string;
   fuel_consumption: string;
   usage_date: string;
+  avg_km_per_liter?: string | null;
+  avg_hours_per_liter?: string | null;
+  expected_km?: number | null;
+  expected_hours?: number | null;
+  km_over_consumption?: boolean;
+  hours_over_consumption?: boolean;
+  over_consumption?: boolean;
 };
 
 export type FuelLogImage = {
@@ -338,6 +346,9 @@ export type Machinery = NamedItem & {
   machine_type: string;
   registration_number: string;
   vehicle_number: string;
+  vehicle_class: string;
+  chassis_number: string;
+  engine_number: string;
   insurance_provider: string;
   insurance_policy_number: string;
   insurance_start_date: string | null;
@@ -345,6 +356,13 @@ export type Machinery = NamedItem & {
   permit_number: string;
   permit_issue_date: string | null;
   permit_expiry_date: string | null;
+  fitness_validity_date: string | null;
+  puc_date: string | null;
+  mv_tax_validity_date: string | null;
+  green_tax_date: string | null;
+  hsrp_done: boolean;
+  avg_km_per_liter: string | null;
+  avg_hours_per_liter: string | null;
   notes: string;
   active: boolean;
   documents: MachineryDocument[];

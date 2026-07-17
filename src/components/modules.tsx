@@ -21,6 +21,7 @@ import {
   ReceiptText,
   ShieldCheck,
   Timer,
+  Trash2,
   Truck,
   UserPlus,
   Users,
@@ -33,6 +34,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { api } from "@/lib/api";
+import { useTablePage } from "@/lib/pagination";
 import { DashboardCharts } from "@/components/dashboard-charts";
 import {
   Field,
@@ -54,6 +56,7 @@ import {
   SearchInput,
   SubsectionTitle,
   TabBar,
+  TablePagination,
   Toolbar,
   btnAccentClass,
   btnPrimaryClass,
@@ -229,18 +232,34 @@ function mediaUrl(url?: string | null) {
   return `${origin}${url.startsWith("/") ? url : `/${url}`}`;
 }
 
-function calendarDayStyle(mark?: "PRESENT" | "ABSENT" | "HALF_DAY", hasEntry?: boolean) {
-  if (!hasEntry) return "bg-cement text-gray-400";
-  if (mark === "ABSENT") return "bg-red-500 text-white";
-  if (mark === "HALF_DAY") return "bg-amber-400 text-white";
+function calendarDayStyle(workday?: number, hasEntry?: boolean) {
+  if (!hasEntry || workday == null) return "bg-cement text-gray-400";
+  if (workday === 0) return "bg-red-500 text-white";
+  if (workday === 0.5) return "bg-amber-400 text-white";
+  if (workday >= 2.5) return "bg-emerald-700 text-white";
+  if (workday >= 2) return "bg-emerald-600 text-white";
+  if (workday >= 1.5) return "bg-green-600 text-white";
   return "bg-green-500 text-white";
 }
 
-function calendarDayLabel(day: number, mark?: "PRESENT" | "ABSENT" | "HALF_DAY", hasEntry?: boolean, compact?: boolean) {
-  if (!hasEntry) return compact ? String(day) : String(day);
-  if (mark === "ABSENT") return "A";
-  if (mark === "HALF_DAY") return "H";
-  return "P";
+function formatWorkdayValue(value?: number) {
+  if (value == null) return "";
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function resolveWorkdayValue(dayData?: MonthlyAttendance["days"][string]): number | undefined {
+  if (!dayData) return undefined;
+  if (dayData.workday_value != null) return Number(dayData.workday_value);
+  if (dayData.attendance_mark === "ABSENT") return 0;
+  if (dayData.attendance_mark === "HALF_DAY") return 0.5;
+  if (dayData.present) return 1;
+  return undefined;
+}
+
+function calendarDayLabel(day: number, workday?: number, hasEntry?: boolean) {
+  if (!hasEntry || workday == null) return String(day);
+  if (workday === 0) return "A";
+  return formatWorkdayValue(workday);
 }
 
 function AttendanceCalendar({
@@ -282,7 +301,7 @@ function AttendanceCalendar({
         <div className="text-center">
           <p className={`font-semibold text-coal ${compact ? "text-sm" : ""}`}>{monthLabel}</p>
           <p className={`text-gray-500 ${compact ? "text-[10px]" : "text-sm"}`}>
-            {data?.present_days ?? 0} present · {data?.total_hours ?? 0}h
+            {data?.present_days ?? 0} workdays · {data?.total_hours ?? 0}h
           </p>
         </div>
         <button type="button" onClick={onNext} className={navBtnClass}>
@@ -305,26 +324,25 @@ function AttendanceCalendar({
           }
           const key = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
           const dayData = data?.days[key];
-          const mark = dayData?.attendance_mark ?? (dayData?.present ? "PRESENT" : undefined);
+          const workday = resolveWorkdayValue(dayData);
           return (
             <div
               key={key}
-              className={`flex items-center justify-center font-black ${cellClass} ${calendarDayStyle(mark, Boolean(dayData))}`}
+              className={`flex items-center justify-center font-black ${cellClass} ${calendarDayStyle(workday, Boolean(dayData))}`}
               title={
                 dayData
-                  ? `${mark ?? "PRESENT"} · ${dayData.working_hours}h${dayData.project_name ? ` · ${dayData.project_name}` : ""}`
+                  ? `Credited workdays: ${formatWorkdayValue(workday)} · ${dayData.working_hours}h${dayData.project_name ? ` · ${dayData.project_name}` : ""}`
                   : "No attendance"
               }
             >
-              {calendarDayLabel(day, mark, Boolean(dayData), compact)}
+              {calendarDayLabel(day, workday, Boolean(dayData))}
             </div>
           );
         })}
       </div>
       {!compact && (
         <p className="mt-3 flex flex-wrap gap-3 text-xs text-gray-500">
-          <span><span className="mr-1 inline-flex h-5 w-5 items-center justify-center rounded bg-green-500 text-[10px] font-black text-white">P</span>Present</span>
-          <span><span className="mr-1 inline-flex h-5 w-5 items-center justify-center rounded bg-amber-400 text-[10px] font-black text-white">H</span>Half day</span>
+          <span><span className="mr-1 inline-flex h-5 w-5 items-center justify-center rounded bg-green-500 text-[10px] font-black text-white">1</span>1–3 workdays</span>
           <span><span className="mr-1 inline-flex h-5 w-5 items-center justify-center rounded bg-red-500 text-[10px] font-black text-white">A</span>Absent</span>
         </p>
       )}
@@ -1276,11 +1294,26 @@ function ProjectDetail({
         <ContentCard title="Machinery usage" subtitle="Equipment hours on this project">
           <div className="space-y-2">
             {usageRows.map((usage) => (
-              <div key={usage.id} className="rounded-lg border border-gray-100 px-3 py-2 text-sm">
-                <p className="font-medium text-gray-900">{usage.machinery_name}</p>
-                <p className="text-xs text-gray-500">
-                  {usage.hours_used}h · {usage.operator || "No operator"} · {usage.usage_date}
+              <div
+                key={usage.id}
+                className={`rounded-lg border px-3 py-2 text-sm ${
+                  usage.over_consumption ? "border-red-200 bg-red-50" : "border-gray-100"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-medium text-gray-900">{usage.machinery_name}</p>
+                  {usage.over_consumption && <Badge tone="red">Over consumption</Badge>}
+                </div>
+                <p className={`text-xs ${usage.over_consumption ? "text-red-700" : "text-gray-500"}`}>
+                  {usage.fuel_consumption}L · {usage.km_used} km · {usage.hours_used}h · {usage.operator || "No operator"} · {usage.usage_date}
                 </p>
+                {(usage.expected_km != null || usage.expected_hours != null) && (
+                  <p className={`mt-1 text-xs ${usage.over_consumption ? "text-red-600" : "text-gray-400"}`}>
+                    Expected for this fuel: {usage.expected_km != null ? `${usage.expected_km} km` : "—"}
+                    {" · "}
+                    {usage.expected_hours != null ? `${usage.expected_hours} hrs` : "—"}
+                  </p>
+                )}
               </div>
             ))}
             {!usageRows.length && (
@@ -1525,10 +1558,12 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
 function PeopleManager({ user }: { user: AuthUser | null }) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
+  const [createRole, setCreateRole] = useState<"SUPERVISOR" | "SUPER_ADMIN">("SUPERVISOR");
+  const [selected, setSelected] = useState<number[]>([]);
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
-  const users = useQuery<Paginated<AuthUser>>({
-    queryKey: ["users"],
-    queryFn: api.users,
+  const supervisors = useQuery<AuthUser[]>({
+    queryKey: ["supervisors"],
+    queryFn: api.supervisors,
     enabled: isSuperAdmin,
     retry: false,
   });
@@ -1542,15 +1577,48 @@ function PeopleManager({ user }: { user: AuthUser | null }) {
     mutationFn: (payload: Parameters<typeof api.createUser>[0]) => api.createUser(payload),
     onSuccess: () => {
       setMessage("User created successfully.");
+      queryClient.invalidateQueries({ queryKey: ["supervisors"] });
       queryClient.invalidateQueries({ queryKey: ["users"] });
       queryClient.invalidateQueries({ queryKey: ["labours"] });
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "User creation failed."),
   });
 
+  const deleteSupervisor = useMutation({
+    mutationFn: api.deleteUser,
+    onSuccess: () => {
+      setMessage("Supervisor removed.");
+      setSelected([]);
+      queryClient.invalidateQueries({ queryKey: ["supervisors"] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Remove failed."),
+  });
+
+  const bulkDeleteSupervisors = useMutation({
+    mutationFn: api.bulkDeleteSupervisors,
+    onSuccess: (result) => {
+      if (result.skipped_count > 0) {
+        const reasons = result.skipped.map((item) => `#${item.id}: ${item.error}`).join("; ");
+        setMessage(
+          result.deleted_count > 0
+            ? `Removed ${result.deleted_count} supervisors. Skipped ${result.skipped_count}: ${reasons}`
+            : `Could not remove supervisors. Skipped ${result.skipped_count}: ${reasons}`,
+        );
+      } else {
+        setMessage(`Removed ${result.deleted_count} supervisors.`);
+      }
+      setSelected([]);
+      queryClient.invalidateQueries({ queryKey: ["supervisors"] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Bulk remove failed."),
+  });
+
   function submitUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const role = isSuperAdmin
+      ? (String(form.get("role") ?? "SUPERVISOR") as AuthUser["role"])
+      : "LABOUR";
     createUser.mutate({
       username: String(form.get("username") ?? ""),
       password: String(form.get("password") ?? ""),
@@ -1558,14 +1626,31 @@ function PeopleManager({ user }: { user: AuthUser | null }) {
       last_name: String(form.get("last_name") ?? ""),
       email: String(form.get("email") ?? ""),
       mobile_number: String(form.get("mobile_number") ?? ""),
-      role: isSuperAdmin
-        ? (String(form.get("role") ?? "LABOUR") as AuthUser["role"])
-        : "LABOUR",
+      role,
+      ...(role === "SUPERVISOR"
+        ? {
+            salary: String(form.get("salary") ?? "0") || "0",
+            daily_salary: String(form.get("daily_salary") ?? "") || null,
+          }
+        : {}),
     });
     event.currentTarget.reset();
+    setCreateRole("SUPERVISOR");
   }
 
-  const userList = isSuperAdmin ? (users.data?.results ?? []) : (labours.data ?? []);
+  const supervisorList = supervisors.data ?? [];
+  const labourList = labours.data ?? [];
+  const listRows = isSuperAdmin ? supervisorList : labourList;
+  const allSelected = listRows.length > 0 && listRows.every((item) => selected.includes(item.id));
+  const deleting = deleteSupervisor.isPending || bulkDeleteSupervisors.isPending;
+
+  function toggle(id: number) {
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function toggleAll() {
+    setSelected((prev) => (allSelected ? [] : listRows.map((item) => item.id)));
+  }
 
   return (
     <section className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
@@ -1573,7 +1658,7 @@ function PeopleManager({ user }: { user: AuthUser | null }) {
         <div className="flex items-center gap-3">
           <UserPlus className="h-6 w-6 text-safety" />
           <h2 className="text-base font-semibold text-coal">
-            {isSuperAdmin ? "Create Supervisor / Labour" : "Create Labour"}
+            {isSuperAdmin ? "Create Supervisor" : "Create Labour"}
           </h2>
         </div>
         <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -1594,14 +1679,28 @@ function PeopleManager({ user }: { user: AuthUser | null }) {
           </Field>
           {isSuperAdmin ? (
             <Field label="Role">
-              <select className={inputClass} name="role" defaultValue="SUPERVISOR">
+              <select
+                className={inputClass}
+                name="role"
+                value={createRole}
+                onChange={(e) => setCreateRole(e.target.value as typeof createRole)}
+              >
                 <option value="SUPERVISOR">Supervisor</option>
-                <option value="LABOUR">Labour</option>
                 <option value="SUPER_ADMIN">Super Admin</option>
               </select>
             </Field>
           ) : (
             <input type="hidden" name="role" value="LABOUR" />
+          )}
+          {isSuperAdmin && createRole === "SUPERVISOR" && (
+            <>
+              <Field label="Monthly salary">
+                <input className={inputClass} name="salary" type="number" min="0" step="0.01" defaultValue="0" />
+              </Field>
+              <Field label="Per day salary">
+                <input className={inputClass} name="daily_salary" type="number" min="0" step="0.01" placeholder="Optional — else monthly ÷ 26" />
+              </Field>
+            </>
           )}
           <div className="md:col-span-2">
             <Field label="Password">
@@ -1615,28 +1714,93 @@ function PeopleManager({ user }: { user: AuthUser | null }) {
         </button>
       </form>
 
-      <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
-        <h2 className="text-base font-semibold text-coal">{isSuperAdmin ? "Team Members" : "Labour Workers"}</h2>
-        <div className="mt-5 grid gap-3 md:grid-cols-2">
-          {userList.map((item) => (
-            <div key={item.id} className="rounded-2xl border border-gray-100 bg-cement p-4">
-              <p className="font-semibold text-coal">{item.full_name || item.username}</p>
-              <p className="text-sm text-gray-500">{item.mobile_number}</p>
-              <p className="mt-3 inline-flex rounded-full bg-white px-3 py-1 text-xs font-bold text-coal">{item.role.replace("_", " ")}</p>
-              {item.role === "SUPERVISOR" && (
-                <Link href={`/supervisors/${item.id}`} className="mt-3 inline-block text-sm font-bold text-safety hover:underline">
-                  View profile
-                </Link>
-              )}
-              {item.role === "LABOUR" && (
-                <Link href={`/workers/${item.id}`} className="mt-3 inline-block text-sm font-bold text-safety hover:underline">
-                  View profile
-                </Link>
-              )}
-            </div>
-          ))}
-          {!userList.length && <p className="rounded-md bg-gray-50 p-5 text-gray-500">No users loaded yet.</p>}
+      <div className="overflow-hidden rounded-lg border border-gray-200/80 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
+          <div>
+            <h2 className="text-base font-semibold text-coal">{isSuperAdmin ? "Supervisors" : "Labour Workers"}</h2>
+            <p className="text-xs text-gray-500">{listRows.length} {isSuperAdmin ? "supervisor" : "worker"}{listRows.length === 1 ? "" : "s"}</p>
+          </div>
+          {isSuperAdmin && selected.length > 0 && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-60"
+              disabled={deleting}
+              onClick={() => {
+                if (!window.confirm(`Remove ${selected.length} selected supervisor${selected.length === 1 ? "" : "s"}? This cannot be undone.`)) {
+                  return;
+                }
+                bulkDeleteSupervisors.mutate(selected);
+              }}
+            >
+              <Trash2 className="h-4 w-4" />
+              {bulkDeleteSupervisors.isPending ? "Removing..." : `Remove selected (${selected.length})`}
+            </button>
+          )}
         </div>
+        <DataTable>
+          <DataTableHead>
+            <tr>
+              {isSuperAdmin && (
+                <th className="px-4 py-2.5">
+                  <input type="checkbox" aria-label="Select all" checked={allSelected} onChange={toggleAll} disabled={!listRows.length} />
+                </th>
+              )}
+              <th className="px-4 py-2.5">Name</th>
+              <th className="px-4 py-2.5">Mobile</th>
+              <th className="px-4 py-2.5">Username</th>
+              <th className="px-4 py-2.5">Actions</th>
+            </tr>
+          </DataTableHead>
+          <DataTableBody>
+            {listRows.map((item, i) => (
+              <DataTableRow key={item.id} zebra={i % 2 === 1}>
+                {isSuperAdmin && (
+                  <DataTableCell>
+                    <input type="checkbox" aria-label={`Select ${item.full_name || item.username}`} checked={selected.includes(item.id)} onChange={() => toggle(item.id)} />
+                  </DataTableCell>
+                )}
+                <DataTableCell className="font-medium text-gray-900">{item.full_name || item.username}</DataTableCell>
+                <DataTableCell>{item.mobile_number || "—"}</DataTableCell>
+                <DataTableCell>{item.username}</DataTableCell>
+                <DataTableCell>
+                  <div className="flex items-center gap-3">
+                    {item.role === "SUPERVISOR" ? (
+                      <Link href={`/supervisors/${item.id}`} className="text-sm font-medium text-violet-700 hover:underline">
+                        View profile
+                      </Link>
+                    ) : item.role === "LABOUR" && item.labour_profile_id ? (
+                      <Link href={`/workers/${item.labour_profile_id}`} className="text-sm font-medium text-violet-700 hover:underline">
+                        View profile
+                      </Link>
+                    ) : (
+                      <span className="text-xs text-gray-400">—</span>
+                    )}
+                    {isSuperAdmin && item.role === "SUPERVISOR" && (
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-red-700 hover:underline disabled:opacity-60"
+                        disabled={deleting}
+                        onClick={() => {
+                          if (!window.confirm(`Remove ${item.full_name || item.username}? This cannot be undone.`)) return;
+                          deleteSupervisor.mutate(item.id);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </DataTableCell>
+              </DataTableRow>
+            ))}
+            {!listRows.length && (
+              <tr>
+                <td colSpan={isSuperAdmin ? 5 : 4} className="px-4 py-10 text-center text-sm text-gray-500">
+                  {isSuperAdmin ? "No supervisors yet." : "No labour workers yet."}
+                </td>
+              </tr>
+            )}
+          </DataTableBody>
+        </DataTable>
       </div>
     </section>
   );
@@ -1839,6 +2003,9 @@ function AttendanceHistoryPage() {
     enabled: hydrated && Boolean(accessToken),
   });
 
+  const rows = attendance.data?.results ?? [];
+  const rowsPage = useTablePage(rows);
+
   if (attendance.isLoading) {
     return <p className="rounded-lg border border-gray-200/80 bg-white p-4 text-sm text-gray-500 shadow-sm">Loading attendance records...</p>;
   }
@@ -1850,8 +2017,6 @@ function AttendanceHistoryPage() {
       </p>
     );
   }
-
-  const rows = attendance.data?.results ?? [];
 
   return (
     <section className="space-y-4">
@@ -1883,7 +2048,7 @@ function AttendanceHistoryPage() {
             </tr>
           </DataTableHead>
           <DataTableBody>
-            {rows.map((record, i) => (
+            {rowsPage.pageRows.map((record, i) => (
               <DataTableRow
                 key={record.id}
                 zebra={i % 2 === 1}
@@ -1910,6 +2075,15 @@ function AttendanceHistoryPage() {
             ))}
           </DataTableBody>
         </DataTable>
+        <TablePagination
+          page={rowsPage.page}
+          totalPages={rowsPage.totalPages}
+          total={rowsPage.total}
+          pageSize={rowsPage.pageSize}
+          from={rowsPage.from}
+          to={rowsPage.to}
+          onPageChange={rowsPage.setPage}
+        />
         {!rows.length && <p className="px-4 py-8 text-center text-sm text-gray-500">No attendance records yet.</p>}
       </div>
     </section>
@@ -1918,29 +2092,17 @@ function AttendanceHistoryPage() {
 
 function AttendanceManager() {
   const router = useRouter();
-  const queryClient = useQueryClient();
-  const [message, setMessage] = useState("");
   const hydrated = useAppSelector((state) => state.auth.hydrated);
   const accessToken = useAppSelector((state) => state.auth.accessToken);
-  const user = useAppSelector((state) => state.auth.user);
   const attendance = useQuery<Paginated<AttendanceRecord>>({
     queryKey: ["attendance"],
     queryFn: () => api.attendance(),
     enabled: hydrated && Boolean(accessToken),
     refetchInterval: 30_000,
   });
-  const approve = useMutation({
-    mutationFn: ({ id, status }: { id: number; status: "APPROVED" | "REJECTED" }) => api.approveAttendance(id, status),
-    onSuccess: () => {
-      setMessage("Attendance updated.");
-      queryClient.invalidateQueries({ queryKey: ["attendance"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["monthly-attendance"] });
-    },
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Attendance update failed."),
-  });
 
   const rows = attendance.data?.results ?? [];
+  const rowsPage = useTablePage(rows);
 
   if (attendance.isLoading) {
     return <p className="rounded-lg border border-gray-200/80 bg-white p-4 text-gray-500 shadow-sm">Loading attendance...</p>;
@@ -1954,172 +2116,101 @@ function AttendanceManager() {
     );
   }
 
-  const onSite = rows.filter((row) => row.status === "PUNCHED_IN");
-  const awaitingApproval = rows.filter(
-    (row) => row.status === "PUNCHED_OUT" && row.approval_status === "PENDING",
-  );
-  const pendingApproval = awaitingApproval.length;
-
-  function canApprove(record: AttendanceRecord) {
-    if (!user) return false;
-    if (record.entry_type === "SUPERVISOR_SELF") return user.role === "SUPER_ADMIN";
-    return user.role === "SUPER_ADMIN" || user.role === "SUPERVISOR";
-  }
-
-  function renderApprovalActions(record: AttendanceRecord) {
-    if (!canApprove(record)) return null;
-    return (
-      <div className="flex gap-2" onClick={(event) => event.stopPropagation()}>
-        <button
-          type="button"
-          className="rounded-xl bg-green-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40"
-          disabled={approve.isPending}
-          onClick={() => approve.mutate({ id: record.id, status: "APPROVED" })}
-        >
-          Approve
-        </button>
-        <button
-          type="button"
-          className="rounded-xl bg-red-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40"
-          disabled={approve.isPending}
-          onClick={() => approve.mutate({ id: record.id, status: "REJECTED" })}
-        >
-          Reject
-        </button>
-      </div>
-    );
-  }
-
   return (
     <section className="space-y-4">
       <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
-        <div className="flex items-center gap-3">
-          <Timer className="h-6 w-6 text-safety" />
-          <div>
-            <h2 className="text-base font-semibold text-coal">Labour Attendance</h2>
-            <p className="text-sm text-gray-500">
-              Monitor live punch-ins with photo and location. Approve after workers punch out.
-            </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Timer className="h-6 w-6 text-safety" />
+            <div>
+              <h2 className="text-base font-semibold text-coal">Labour Attendance</h2>
+              <p className="text-sm text-gray-500">Mark bulk attendance and review punch records.</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/attendance/bulk" className={btnPrimaryClass}>
+              <Users className="h-4 w-4" />
+              Bulk Attendance
+            </Link>
+            <Link href="/attendance/history" className={btnSecondaryClass}>
+              <History className="h-4 w-4" />
+              View All Records
+            </Link>
           </div>
         </div>
-        {message && <p className="mt-4 rounded-2xl bg-safety/15 px-4 py-3 text-sm font-semibold text-coal">{message}</p>}
-
-        <div className="mt-6 grid gap-4 sm:grid-cols-3">
-          <div className="rounded-2xl bg-green-50 p-4">
-            <p className="text-xs font-bold uppercase text-green-800">On site now</p>
-            <p className="mt-1 text-xl font-semibold text-green-900">{onSite.length}</p>
-          </div>
-          <div className="rounded-2xl bg-amber-50 p-4">
-            <p className="text-xs font-bold uppercase text-amber-800">Awaiting approval</p>
-            <p className="mt-1 text-xl font-semibold text-amber-900">{pendingApproval}</p>
-          </div>
-          <div className="rounded-md bg-gray-50 p-4">
-            <p className="text-xs font-bold uppercase text-gray-600">Total records</p>
-            <p className="mt-1 text-3xl font-semibold text-coal">{rows.length}</p>
-          </div>
-        </div>
-        <div className="mt-4 flex justify-end">
-          <Link href="/attendance/history" className={btnSecondaryClass}>
-            <History className="h-4 w-4" />
-            View All Records
-          </Link>
+        <div className="mt-6 rounded-md bg-gray-50 p-4">
+          <p className="text-xs font-bold uppercase text-gray-600">Total records</p>
+          <p className="mt-1 text-3xl font-semibold text-coal">{rows.length}</p>
         </div>
       </div>
 
-      <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
-        <h3 className="text-sm font-semibold text-coal">Awaiting approval</h3>
-        <p className="mt-1 text-sm text-gray-500">Punched-out shifts waiting for your approval.</p>
-        <div className="mt-5 space-y-3">
-          {awaitingApproval.map((record) => (
-            <div
-              key={record.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => router.push(`/attendance/${record.id}`)}
-              onKeyDown={(event) => event.key === "Enter" && router.push(`/attendance/${record.id}`)}
-              className="cursor-pointer rounded-2xl border border-amber-100 bg-amber-50/40 p-4 transition hover:border-amber-300"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="font-semibold text-coal">{record.labour_name || "Worker"}</p>
-                  <p className="text-sm text-gray-600">{record.project_name}</p>
-                </div>
-                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-800">
-                  {record.entry_type === "SUPERVISOR_SELF" ? "Supervisor · Pending" : "Pending"}
-                </span>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-4 text-sm text-gray-600">
-                <p className="font-bold text-coal">{record.working_hours}h worked</p>
-                <p>In: {formatDateTime(record.punch_in_at)}</p>
-                <p>Out: {formatDateTime(record.punch_out_at)}</p>
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <AttendanceProof
-                  label="Punch in"
-                  photoUrl={record.punch_in_selfie_url}
-                  lat={record.punch_in_latitude}
-                  lng={record.punch_in_longitude}
-                  at={record.punch_in_at}
-                />
-                <AttendanceProof
-                  label="Punch out"
-                  photoUrl={record.punch_out_selfie_url}
-                  lat={record.punch_out_latitude}
-                  lng={record.punch_out_longitude}
-                  at={record.punch_out_at}
-                />
-              </div>
-              <div className="mt-3">{renderApprovalActions(record)}</div>
-            </div>
-          ))}
-          {!awaitingApproval.length && (
-            <p className="rounded-md bg-gray-50 p-5 text-gray-500">No punch-out records waiting for approval.</p>
-          )}
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="border-b border-gray-100 px-4 py-3">
+          <h3 className="text-sm font-semibold text-coal">Recent attendance</h3>
+          <p className="text-xs text-gray-500">Latest punch records · click a row for details</p>
         </div>
-      </div>
-
-      <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
-        <h3 className="text-sm font-semibold text-coal">Workers on site now</h3>
-        <p className="mt-1 text-sm text-gray-500">Live punch-ins with photo and GPS location.</p>
-        <div className="mt-5 space-y-3">
-          {onSite.map((record) => (
-            <div
-              key={record.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => router.push(`/attendance/${record.id}`)}
-              onKeyDown={(event) => event.key === "Enter" && router.push(`/attendance/${record.id}`)}
-              className="cursor-pointer rounded-2xl border border-green-100 bg-green-50/50 p-4 transition hover:border-green-300"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="font-semibold text-coal">{record.labour_name || "Worker"}</p>
-                  <p className="text-sm text-gray-600">{record.project_name}</p>
-                </div>
-                <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-bold uppercase text-green-800">
-                  On site
-                </span>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-4 text-sm text-gray-600">
-                <p>Punched in: {formatDateTime(record.punch_in_at)}</p>
-                <p>Hours so far: {record.working_hours}h</p>
-              </div>
-              <div className="mt-3">
-                <AttendanceProof
-                  label="Punch in"
-                  photoUrl={record.punch_in_selfie_url}
-                  lat={record.punch_in_latitude}
-                  lng={record.punch_in_longitude}
-                  at={record.punch_in_at}
-                />
-              </div>
-              <p className="mt-3 text-xs text-gray-500">Approve after the worker punches out. Click to view details.</p>
-            </div>
-          ))}
-          {!onSite.length && (
-            <p className="rounded-md bg-gray-50 p-5 text-gray-500">No workers are currently punched in.</p>
-          )}
-        </div>
+        <DataTable>
+          <DataTableHead>
+            <tr>
+              <th className="px-4 py-2.5">Worker</th>
+              <th className="px-4 py-2.5">Date</th>
+              <th className="px-4 py-2.5">Mark</th>
+              <th className="px-4 py-2.5">Hours</th>
+              <th className="px-4 py-2.5">Project</th>
+              <th className="px-4 py-2.5">Status</th>
+              <th className="px-4 py-2.5">Approval</th>
+            </tr>
+          </DataTableHead>
+          <DataTableBody>
+            {rowsPage.pageRows.map((record, i) => (
+              <DataTableRow key={record.id} zebra={i % 2 === 1} onClick={() => router.push(`/attendance/${record.id}`)}>
+                <DataTableCell className="font-medium text-gray-900">{record.labour_name || "Worker"}</DataTableCell>
+                <DataTableCell>{formatDate(record.punch_in_at)}</DataTableCell>
+                <DataTableCell>
+                  <Badge
+                    tone={
+                      Number(record.workday_value ?? (record.attendance_mark === "ABSENT" ? 0 : record.attendance_mark === "HALF_DAY" ? 0.5 : 1)) === 0
+                        ? "red"
+                        : Number(record.workday_value) === 0.5 || record.attendance_mark === "HALF_DAY"
+                          ? "amber"
+                          : "green"
+                    }
+                  >
+                    {record.workday_value != null
+                      ? Number(record.workday_value) === 0
+                        ? "Absent"
+                        : `${Number.isInteger(Number(record.workday_value)) ? Number(record.workday_value) : Number(record.workday_value).toFixed(1)}d`
+                      : record.attendance_mark || "PRESENT"}
+                  </Badge>
+                </DataTableCell>
+                <DataTableCell>{record.working_hours}h</DataTableCell>
+                <DataTableCell>{record.project_name || "—"}</DataTableCell>
+                <DataTableCell>
+                  <Badge tone={attendanceStatusTone(record.status)}>{record.status.replace("_", " ")}</Badge>
+                </DataTableCell>
+                <DataTableCell>
+                  <Badge tone={attendanceApprovalTone(record.approval_status)}>{record.approval_status}</Badge>
+                </DataTableCell>
+              </DataTableRow>
+            ))}
+            {!rows.length && (
+              <tr>
+                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-500">
+                  No attendance records yet. Use Bulk Attendance to mark workers.
+                </td>
+              </tr>
+            )}
+          </DataTableBody>
+        </DataTable>
+        <TablePagination
+          page={rowsPage.page}
+          totalPages={rowsPage.totalPages}
+          total={rowsPage.total}
+          pageSize={rowsPage.pageSize}
+          from={rowsPage.from}
+          to={rowsPage.to}
+          onPageChange={rowsPage.setPage}
+        />
       </div>
     </section>
   );
@@ -2195,6 +2286,7 @@ function PayrollManager() {
   }
 
   const salaryRows = salaries.data?.results ?? [];
+  const salariesPage = useTablePage(salaryRows, { resetKey: `${filterMonth}-${filterYear}` });
   const pendingCount = salaryRows.filter((salary) => salary.payment_status === "PENDING").length;
   const paidCount = salaryRows.filter((salary) => salary.payment_status === "PAID").length;
   const filterPeriodLabel = new Date(filterYear, filterMonth - 1, 1).toLocaleString("en-IN", {
@@ -2470,7 +2562,7 @@ function PayrollManager() {
             </tr>
           </DataTableHead>
           <DataTableBody>
-            {salaryRows.map((salary, index) => (
+            {salariesPage.pageRows.map((salary, index) => (
               <DataTableRow key={salary.id} zebra={index % 2 === 1}>
                 <DataTableCell className="font-medium text-gray-900">{salary.labour_name}</DataTableCell>
                 <DataTableCell className="text-xs">
@@ -2514,6 +2606,15 @@ function PayrollManager() {
           </DataTableBody>
         </DataTable>
         )}
+        <TablePagination
+          page={salariesPage.page}
+          totalPages={salariesPage.totalPages}
+          total={salariesPage.total}
+          pageSize={salariesPage.pageSize}
+          from={salariesPage.from}
+          to={salariesPage.to}
+          onPageChange={salariesPage.setPage}
+        />
         {!salaries.isLoading && !salaryRows.length && (
           <p className="px-4 py-8 text-center text-sm text-amber-700">
             Salary not generated yet for {filterPeriodLabel}.
@@ -2525,6 +2626,75 @@ function PayrollManager() {
   );
 }
 
+function daysUntil(date?: string | null) {
+  if (!date) return null;
+  return (new Date(date).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+}
+
+function isUpcomingExpiry(date?: string | null, withinDays = 30) {
+  const days = daysUntil(date);
+  return days != null && days >= 0 && days <= withinDays;
+}
+
+function isExpired(date?: string | null) {
+  const days = daysUntil(date);
+  return days != null && days < 0;
+}
+
+type MachineryComplianceKey = "all" | "insurance" | "permit" | "fitness" | "puc" | "green_tax" | "hsrp";
+type MachineryExpiryKey = "upcoming" | "expired" | "any" | "all";
+
+function machineryComplianceDate(item: Machinery, key: Exclude<MachineryComplianceKey, "all" | "hsrp">) {
+  switch (key) {
+    case "insurance":
+      return item.insurance_expiry_date;
+    case "permit":
+      return item.permit_expiry_date;
+    case "fitness":
+      return item.fitness_validity_date;
+    case "puc":
+      return item.puc_date;
+    case "green_tax":
+      return item.green_tax_date;
+  }
+}
+
+function matchesMachineryCompliance(item: Machinery, compliance: MachineryComplianceKey, expiry: MachineryExpiryKey) {
+  if (compliance === "hsrp") {
+    if (expiry === "all") return true;
+    if (expiry === "expired" || expiry === "upcoming" || expiry === "any") return !item.hsrp_done;
+    return true;
+  }
+
+  const dateFields: Array<Exclude<MachineryComplianceKey, "all" | "hsrp">> =
+    compliance === "all" ? ["insurance", "permit", "fitness", "puc", "green_tax"] : [compliance];
+
+  if (expiry === "all") {
+    if (compliance === "all") return true;
+    return Boolean(machineryComplianceDate(item, compliance));
+  }
+
+  return dateFields.some((key) => {
+    const date = machineryComplianceDate(item, key);
+    if (expiry === "upcoming") return isUpcomingExpiry(date);
+    if (expiry === "expired") return isExpired(date);
+    // any issue
+    return isUpcomingExpiry(date) || isExpired(date);
+  }) || (compliance === "all" && expiry !== "expired" && !item.hsrp_done && (expiry === "upcoming" || expiry === "any"));
+}
+
+function formatShortDate(value?: string | null) {
+  if (!value) return "—";
+  return new Date(value).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+}
+
+function expiryBadgeTone(date?: string | null): "green" | "amber" | "red" | "gray" {
+  if (!date) return "gray";
+  if (isExpired(date)) return "red";
+  if (isUpcomingExpiry(date)) return "amber";
+  return "green";
+}
+
 function OperationsManager({ module }: { module: "materials" | "vendors" | "expenses" | "machinery" | "reports" }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -2532,6 +2702,9 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
   const [machineryTab, setMachineryTab] = useState<"fuel" | "machines" | "usage" | "maintenance">("fuel");
   const [fuelModalOpen, setFuelModalOpen] = useState(false);
   const [machineModalOpen, setMachineModalOpen] = useState(false);
+  const [usageModalOpen, setUsageModalOpen] = useState(false);
+  const [machineryComplianceFilter, setMachineryComplianceFilter] = useState<MachineryComplianceKey>("all");
+  const [machineryExpiryFilter, setMachineryExpiryFilter] = useState<MachineryExpiryKey>("upcoming");
   const projects = useQuery<Paginated<Project>>({ queryKey: ["projects"], queryFn: api.projects });
   const vendors = useQuery<Paginated<Vendor>>({ queryKey: ["vendors"], queryFn: api.vendors, retry: false });
   const materials = useQuery<Paginated<Material>>({ queryKey: ["materials"], queryFn: api.materials, retry: false });
@@ -2543,6 +2716,12 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
   const expenses = useQuery<Paginated<Expense>>({ queryKey: ["expenses"], queryFn: api.expenses, retry: false });
   const machinery = useQuery<Paginated<Machinery>>({ queryKey: ["machinery"], queryFn: api.machinery, retry: false });
   const fuelLogs = useQuery<Paginated<FuelLog>>({ queryKey: ["fuel-logs"], queryFn: api.fuelLogs, retry: false });
+  const machineryUsageList = useQuery<Paginated<MachineryUsage>>({
+    queryKey: ["machinery-usage"],
+    queryFn: () => api.machineryUsage(),
+    retry: false,
+    enabled: module === "machinery",
+  });
   const reports = useQuery<OperationsReport>({ queryKey: ["reports"], queryFn: api.reports, retry: false });
 
   const onSuccess = (text: string, keys: string[]) => {
@@ -2596,7 +2775,10 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
   });
   const createUsage = useMutation({
     mutationFn: (payload: Parameters<typeof api.createMachineryUsage>[0]) => api.createMachineryUsage(payload),
-    onSuccess: () => onSuccess("Machinery usage recorded.", ["reports"]),
+    onSuccess: () => {
+      onSuccess("Machinery usage recorded.", ["reports", "machinery-usage"]);
+      setUsageModalOpen(false);
+    },
     onError,
   });
   const createFuel = useMutation({
@@ -2619,7 +2801,16 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
   const materialStockList = materialStock.data?.results ?? [];
   const expenseList = expenses.data?.results ?? [];
   const machineryList = machinery.data?.results ?? [];
+  const filteredMachineryList = machineryList.filter((item) =>
+    matchesMachineryCompliance(item, machineryComplianceFilter, machineryExpiryFilter),
+  );
   const fuelLogList = fuelLogs.data?.results ?? [];
+  const usageList = machineryUsageList.data?.results ?? [];
+  const fuelPage = useTablePage(fuelLogList, { resetKey: machineryTab });
+  const machineryPage = useTablePage(filteredMachineryList, {
+    resetKey: `${machineryComplianceFilter}-${machineryExpiryFilter}`,
+  });
+  const usagePage = useTablePage(usageList, { resetKey: "usage" });
 
   const projectSelect = (
     <select className={inputClass} name="project" required>
@@ -2899,7 +3090,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
               tabs={[
                 { id: "fuel", label: "Fuel Logs", count: fuelLogList.length },
                 { id: "machines", label: "Machinery", count: machineryList.length },
-                { id: "usage", label: "Usage" },
+                { id: "usage", label: "Usage", count: usageList.length },
                 { id: "maintenance", label: "Maintenance" },
               ]}
             />
@@ -2925,7 +3116,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                     </tr>
                   </DataTableHead>
                   <DataTableBody>
-                    {fuelLogList.map((item, i) => (
+                    {fuelPage.pageRows.map((item, i) => (
                       <DataTableRow key={item.id} zebra={i % 2 === 1}>
                         <DataTableCell>{item.logged_date}</DataTableCell>
                         <DataTableCell className="font-medium text-gray-900">{item.machinery_name}</DataTableCell>
@@ -2965,13 +3156,55 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                     )}
                   </DataTableBody>
                 </DataTable>
+                <TablePagination
+                  page={fuelPage.page}
+                  totalPages={fuelPage.totalPages}
+                  total={fuelPage.total}
+                  pageSize={fuelPage.pageSize}
+                  from={fuelPage.from}
+                  to={fuelPage.to}
+                  onPageChange={fuelPage.setPage}
+                />
               </>
             )}
 
             {machineryTab === "machines" && (
               <>
                 <Toolbar>
-                  <p className="text-sm text-gray-500">{machineryList.length} machines · click a row for full details</p>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label className="block">
+                      <span className="text-xs font-medium text-gray-600">Document</span>
+                      <select
+                        className={`${inputClass} mt-1 min-w-[9rem]`}
+                        value={machineryComplianceFilter}
+                        onChange={(event) => setMachineryComplianceFilter(event.target.value as MachineryComplianceKey)}
+                      >
+                        <option value="all">All documents</option>
+                        <option value="insurance">Insurance</option>
+                        <option value="permit">Permit</option>
+                        <option value="fitness">Fitness</option>
+                        <option value="puc">PUC</option>
+                        <option value="green_tax">Green tax</option>
+                        <option value="hsrp">HSRP</option>
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="text-xs font-medium text-gray-600">Expiry</span>
+                      <select
+                        className={`${inputClass} mt-1 min-w-[11rem]`}
+                        value={machineryExpiryFilter}
+                        onChange={(event) => setMachineryExpiryFilter(event.target.value as MachineryExpiryKey)}
+                      >
+                        <option value="upcoming">Upcoming (30 days)</option>
+                        <option value="expired">Expired</option>
+                        <option value="any">Expired or upcoming</option>
+                        <option value="all">All records</option>
+                      </select>
+                    </label>
+                    <p className="pb-2 text-sm text-gray-500">
+                      {filteredMachineryList.length} of {machineryList.length} machines
+                    </p>
+                  </div>
                   <button type="button" className={btnPrimaryClass} onClick={() => setMachineModalOpen(true)}>
                     + Add Machine
                   </button>
@@ -2980,76 +3213,164 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                   <DataTableHead>
                     <tr>
                       <th className="px-4 py-2.5">Name</th>
-                      <th className="px-4 py-2.5">Type</th>
-                      <th className="px-4 py-2.5">Vehicle No.</th>
-                      <th className="px-4 py-2.5">Registration</th>
+                      <th className="px-4 py-2.5">Vehicle</th>
                       <th className="px-4 py-2.5">Insurance</th>
                       <th className="px-4 py-2.5">Permit</th>
+                      <th className="px-4 py-2.5">Fitness</th>
+                      <th className="px-4 py-2.5">PUC</th>
+                      <th className="px-4 py-2.5">Green tax</th>
+                      <th className="px-4 py-2.5">HSRP</th>
                       <th className="px-4 py-2.5">Status</th>
                     </tr>
                   </DataTableHead>
                   <DataTableBody>
-                    {machineryList.map((item, i) => (
+                    {machineryPage.pageRows.map((item, i) => (
                       <DataTableRow key={item.id} zebra={i % 2 === 1} onClick={() => router.push(`/machinery/${item.id}`)}>
-                        <DataTableCell className="font-medium text-gray-900">{item.name}</DataTableCell>
-                        <DataTableCell>{item.machine_type}</DataTableCell>
-                        <DataTableCell>{item.vehicle_number || "—"}</DataTableCell>
-                        <DataTableCell>{item.registration_number}</DataTableCell>
-                        <DataTableCell className="text-xs text-gray-600">
-                          {item.insurance_expiry_date
-                            ? new Date(item.insurance_expiry_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
-                            : "—"}
+                        <DataTableCell className="font-medium text-gray-900">
+                          <p>{item.name}</p>
+                          <p className="text-xs font-normal text-gray-500">{item.machine_type}</p>
                         </DataTableCell>
-                        <DataTableCell className="text-xs text-gray-600">
-                          {item.permit_expiry_date
-                            ? new Date(item.permit_expiry_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
-                            : "—"}
+                        <DataTableCell className="text-xs">
+                          <p>{item.vehicle_number || "—"}</p>
+                          <p className="text-gray-500">{item.registration_number}</p>
+                        </DataTableCell>
+                        <DataTableCell>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-gray-600">{formatShortDate(item.insurance_expiry_date)}</span>
+                            {item.insurance_expiry_date && <Badge tone={expiryBadgeTone(item.insurance_expiry_date)}>{expiryBadgeTone(item.insurance_expiry_date) === "red" ? "Expired" : expiryBadgeTone(item.insurance_expiry_date) === "amber" ? "Soon" : "OK"}</Badge>}
+                          </div>
+                        </DataTableCell>
+                        <DataTableCell>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-gray-600">{formatShortDate(item.permit_expiry_date)}</span>
+                            {item.permit_expiry_date && <Badge tone={expiryBadgeTone(item.permit_expiry_date)}>{expiryBadgeTone(item.permit_expiry_date) === "red" ? "Expired" : expiryBadgeTone(item.permit_expiry_date) === "amber" ? "Soon" : "OK"}</Badge>}
+                          </div>
+                        </DataTableCell>
+                        <DataTableCell>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-gray-600">{formatShortDate(item.fitness_validity_date)}</span>
+                            {item.fitness_validity_date && <Badge tone={expiryBadgeTone(item.fitness_validity_date)}>{expiryBadgeTone(item.fitness_validity_date) === "red" ? "Expired" : expiryBadgeTone(item.fitness_validity_date) === "amber" ? "Soon" : "OK"}</Badge>}
+                          </div>
+                        </DataTableCell>
+                        <DataTableCell>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-gray-600">{formatShortDate(item.puc_date)}</span>
+                            {item.puc_date && <Badge tone={expiryBadgeTone(item.puc_date)}>{expiryBadgeTone(item.puc_date) === "red" ? "Expired" : expiryBadgeTone(item.puc_date) === "amber" ? "Soon" : "OK"}</Badge>}
+                          </div>
+                        </DataTableCell>
+                        <DataTableCell>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-gray-600">{formatShortDate(item.green_tax_date)}</span>
+                            {item.green_tax_date && <Badge tone={expiryBadgeTone(item.green_tax_date)}>{expiryBadgeTone(item.green_tax_date) === "red" ? "Expired" : expiryBadgeTone(item.green_tax_date) === "amber" ? "Soon" : "OK"}</Badge>}
+                          </div>
+                        </DataTableCell>
+                        <DataTableCell>
+                          <Badge tone={item.hsrp_done ? "green" : "amber"}>{item.hsrp_done ? "Done" : "Pending"}</Badge>
                         </DataTableCell>
                         <DataTableCell>
                           <Badge tone={item.active ? "green" : "gray"}>{item.active ? "Active" : "Inactive"}</Badge>
                         </DataTableCell>
                       </DataTableRow>
                     ))}
-                    {!machineryList.length && (
+                    {!filteredMachineryList.length && (
                       <tr>
-                        <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-500">
-                          No machinery registered yet.
+                        <td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-500">
+                          {machineryList.length
+                            ? "No machines match these expiry filters."
+                            : "No machinery registered yet."}
                         </td>
                       </tr>
                     )}
                   </DataTableBody>
                 </DataTable>
+                <TablePagination
+                  page={machineryPage.page}
+                  totalPages={machineryPage.totalPages}
+                  total={machineryPage.total}
+                  pageSize={machineryPage.pageSize}
+                  from={machineryPage.from}
+                  to={machineryPage.to}
+                  onPageChange={machineryPage.setPage}
+                />
               </>
             )}
 
             {machineryTab === "usage" && (
-              <div className="p-4">
-                <form
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    const form = new FormData(event.currentTarget);
-                    createUsage.mutate({
-                      project: Number(form.get("project")),
-                      machinery: Number(form.get("machinery")),
-                      operator: formValue(form, "operator"),
-                      hours_used: formValue(form, "hours_used"),
-                      fuel_consumption: formValue(form, "fuel_consumption") || "0",
-                      usage_date: formValue(form, "usage_date"),
-                    });
-                    event.currentTarget.reset();
-                  }}
-                >
-                  <FormRow label="Project">{projectSelect}</FormRow>
-                  <FormRow label="Machine">{machinerySelect}</FormRow>
-                  <FormRow label="Operator"><input className={inputClass} name="operator" /></FormRow>
-                  <FormRow label="Hours used"><input className={inputClass} name="hours_used" type="number" required /></FormRow>
-                  <FormRow label="Fuel consumption"><input className={inputClass} name="fuel_consumption" type="number" defaultValue="0" /></FormRow>
-                  <FormRow label="Date"><input className={inputClass} name="usage_date" type="date" required /></FormRow>
-                  <div className="mt-4 flex justify-end">
-                    <button className={btnPrimaryClass}>Save Usage</button>
-                  </div>
-                </form>
-              </div>
+              <>
+                <Toolbar>
+                  <p className="text-sm text-gray-500">{usageList.length} usage entries</p>
+                  <button type="button" className={btnPrimaryClass} onClick={() => setUsageModalOpen(true)}>
+                    + Add Usage
+                  </button>
+                </Toolbar>
+                <DataTable>
+                  <DataTableHead>
+                    <tr>
+                      <th className="px-4 py-2.5">Date</th>
+                      <th className="px-4 py-2.5">Machine</th>
+                      <th className="px-4 py-2.5">Project</th>
+                      <th className="px-4 py-2.5">Fuel</th>
+                      <th className="px-4 py-2.5">KM</th>
+                      <th className="px-4 py-2.5">Hours</th>
+                      <th className="px-4 py-2.5">Efficiency</th>
+                    </tr>
+                  </DataTableHead>
+                  <DataTableBody>
+                    {usagePage.pageRows.map((usage, i) => (
+                      <DataTableRow key={usage.id} zebra={i % 2 === 1}>
+                        <DataTableCell>{usage.usage_date}</DataTableCell>
+                        <DataTableCell className="font-medium text-gray-900">
+                          <p>{usage.machinery_name}</p>
+                          <p className="text-xs font-normal text-gray-500">{usage.operator || "No operator"}</p>
+                        </DataTableCell>
+                        <DataTableCell>{usage.project_name}</DataTableCell>
+                        <DataTableCell>{usage.fuel_consumption} L</DataTableCell>
+                        <DataTableCell className={usage.km_over_consumption ? "font-semibold text-red-700" : undefined}>
+                          {usage.km_used} km
+                          {usage.expected_km != null ? (
+                            <p className={`text-xs ${usage.km_over_consumption ? "text-red-600" : "text-gray-500"}`}>
+                              expected {usage.expected_km} km
+                            </p>
+                          ) : null}
+                        </DataTableCell>
+                        <DataTableCell className={usage.hours_over_consumption ? "font-semibold text-red-700" : undefined}>
+                          {usage.hours_used} h
+                          {usage.expected_hours != null ? (
+                            <p className={`text-xs ${usage.hours_over_consumption ? "text-red-600" : "text-gray-500"}`}>
+                              expected {usage.expected_hours} h
+                            </p>
+                          ) : null}
+                        </DataTableCell>
+                        <DataTableCell>
+                          {usage.over_consumption ? (
+                            <Badge tone="red">Over consumption</Badge>
+                          ) : Number(usage.fuel_consumption) > 0 ? (
+                            <Badge tone="green">Normal</Badge>
+                          ) : (
+                            <span className="text-xs text-gray-400">—</span>
+                          )}
+                        </DataTableCell>
+                      </DataTableRow>
+                    ))}
+                    {!usageList.length && (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-500">
+                          No usage logs yet. Click &quot;Add Usage&quot; to create one.
+                        </td>
+                      </tr>
+                    )}
+                  </DataTableBody>
+                </DataTable>
+                <TablePagination
+                  page={usagePage.page}
+                  totalPages={usagePage.totalPages}
+                  total={usagePage.total}
+                  pageSize={usagePage.pageSize}
+                  from={usagePage.from}
+                  to={usagePage.to}
+                  onPageChange={usagePage.setPage}
+                />
+              </>
             )}
 
             {machineryTab === "maintenance" && (
@@ -3132,9 +3453,51 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
           </Modal>
 
           <Modal
+            open={usageModalOpen}
+            title="Add Usage"
+            subtitle="Log hours, km, and fuel. Over-consumption is flagged when efficiency is below the machine average."
+            onClose={() => setUsageModalOpen(false)}
+            footer={
+              <>
+                <button type="button" className={btnSecondaryClass} onClick={() => setUsageModalOpen(false)}>
+                  Cancel
+                </button>
+                <button type="submit" form="usage-form" className={btnPrimaryClass} disabled={createUsage.isPending}>
+                  {createUsage.isPending ? "Saving..." : "Save Usage"}
+                </button>
+              </>
+            }
+          >
+            <form
+              id="usage-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const form = new FormData(event.currentTarget);
+                createUsage.mutate({
+                  project: Number(form.get("project")),
+                  machinery: Number(form.get("machinery")),
+                  operator: formValue(form, "operator"),
+                  hours_used: formValue(form, "hours_used"),
+                  km_used: formValue(form, "km_used") || "0",
+                  fuel_consumption: formValue(form, "fuel_consumption") || "0",
+                  usage_date: formValue(form, "usage_date"),
+                });
+              }}
+            >
+              <FormRow label="Project">{projectSelect}</FormRow>
+              <FormRow label="Machine">{machinerySelect}</FormRow>
+              <FormRow label="Operator"><input className={inputClass} name="operator" /></FormRow>
+              <FormRow label="Hours used"><input className={inputClass} name="hours_used" type="number" min="0" step="0.1" required /></FormRow>
+              <FormRow label="KM used"><input className={inputClass} name="km_used" type="number" min="0" step="0.1" defaultValue="0" /></FormRow>
+              <FormRow label="Fuel (liters)"><input className={inputClass} name="fuel_consumption" type="number" min="0" step="0.1" defaultValue="0" /></FormRow>
+              <FormRow label="Date"><input className={inputClass} name="usage_date" type="date" required /></FormRow>
+            </form>
+          </Modal>
+
+          <Modal
             open={machineModalOpen}
             title="Add Machinery"
-            subtitle="Register machinery with insurance, permit, and documents"
+            subtitle="Register machinery with vehicle, insurance, permit, and compliance details"
             onClose={() => setMachineModalOpen(false)}
             footer={
               <>
@@ -3158,6 +3521,9 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                   machine_type: formValue(form, "machine_type"),
                   registration_number: formValue(form, "registration_number"),
                   vehicle_number: formValue(form, "vehicle_number"),
+                  vehicle_class: formValue(form, "vehicle_class"),
+                  chassis_number: formValue(form, "chassis_number"),
+                  engine_number: formValue(form, "engine_number"),
                   insurance_provider: formValue(form, "insurance_provider"),
                   insurance_policy_number: formValue(form, "insurance_policy_number"),
                   insurance_start_date: formValue(form, "insurance_start_date"),
@@ -3165,6 +3531,13 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                   permit_number: formValue(form, "permit_number"),
                   permit_issue_date: formValue(form, "permit_issue_date"),
                   permit_expiry_date: formValue(form, "permit_expiry_date"),
+                  fitness_validity_date: formValue(form, "fitness_validity_date"),
+                  puc_date: formValue(form, "puc_date"),
+                  mv_tax_validity_date: formValue(form, "mv_tax_validity_date"),
+                  green_tax_date: formValue(form, "green_tax_date"),
+                  hsrp_done: form.get("hsrp_done") === "on",
+                  avg_km_per_liter: formValue(form, "avg_km_per_liter"),
+                  avg_hours_per_liter: formValue(form, "avg_hours_per_liter"),
                   notes: formValue(form, "notes"),
                   active: form.get("active") === "on",
                   document_type: formValue(form, "document_type") || "OTHER",
@@ -3176,6 +3549,15 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
               <FormRow label="Type"><input className={inputClass} name="machine_type" required placeholder="Excavator, Truck, Crane..." /></FormRow>
               <FormRow label="Vehicle number"><input className={inputClass} name="vehicle_number" placeholder="MH-12-AB-1234" /></FormRow>
               <FormRow label="Registration number"><input className={inputClass} name="registration_number" required /></FormRow>
+              <FormRow label="Vehicle class"><input className={inputClass} name="vehicle_class" placeholder="LMV, HMV, Trailer..." /></FormRow>
+              <FormRow label="Chassis no."><input className={inputClass} name="chassis_number" /></FormRow>
+              <FormRow label="Engine no."><input className={inputClass} name="engine_number" /></FormRow>
+              <div className="mt-4 border-t border-gray-100 pt-4">
+                <p className="text-sm font-semibold text-coal">Average fuel consumption</p>
+                <p className="mt-1 text-xs text-gray-500">Used to detect over-consumption on usage logs (1 liter baseline).</p>
+              </div>
+              <FormRow label="Avg km / liter"><input className={inputClass} name="avg_km_per_liter" type="number" min="0" step="0.1" placeholder="e.g. 4 = 1L covers 4 km" /></FormRow>
+              <FormRow label="Avg hrs / liter"><input className={inputClass} name="avg_hours_per_liter" type="number" min="0" step="0.1" placeholder="e.g. 4 = 1L covers 4 hours" /></FormRow>
               <div className="mt-4 border-t border-gray-100 pt-4">
                 <p className="text-sm font-semibold text-coal">Insurance</p>
               </div>
@@ -3187,8 +3569,21 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                 <p className="text-sm font-semibold text-coal">Permit</p>
               </div>
               <FormRow label="Permit number"><input className={inputClass} name="permit_number" /></FormRow>
-              <FormRow label="Issue date"><input className={inputClass} name="permit_issue_date" type="date" /></FormRow>
-              <FormRow label="Expiry date"><input className={inputClass} name="permit_expiry_date" type="date" /></FormRow>
+              <FormRow label="Permit date"><input className={inputClass} name="permit_issue_date" type="date" /></FormRow>
+              <FormRow label="Permit validity"><input className={inputClass} name="permit_expiry_date" type="date" /></FormRow>
+              <div className="mt-4 border-t border-gray-100 pt-4">
+                <p className="text-sm font-semibold text-coal">Compliance</p>
+              </div>
+              <FormRow label="Fitness validity"><input className={inputClass} name="fitness_validity_date" type="date" /></FormRow>
+              <FormRow label="PUC date"><input className={inputClass} name="puc_date" type="date" /></FormRow>
+              <FormRow label="MV tax validity"><input className={inputClass} name="mv_tax_validity_date" type="date" /></FormRow>
+              <FormRow label="Green tax date"><input className={inputClass} name="green_tax_date" type="date" /></FormRow>
+              <FormRow label="HSRP done">
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input type="checkbox" name="hsrp_done" className="rounded border-gray-300" />
+                  HSRP completed
+                </label>
+              </FormRow>
               <FormRow label="Notes"><textarea className={inputClass} name="notes" rows={2} /></FormRow>
               <FormRow label="Status">
                 <label className="flex items-center gap-2 text-sm text-gray-700">

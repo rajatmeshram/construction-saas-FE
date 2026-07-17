@@ -181,6 +181,57 @@ export function DataTableCell({
   return <td className={`whitespace-nowrap px-4 py-2.5 text-gray-700 ${className}`}>{children}</td>;
 }
 
+export function TablePagination({
+  page,
+  totalPages,
+  total,
+  pageSize,
+  from,
+  to,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  total: number;
+  pageSize: number;
+  from: number;
+  to: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (total <= pageSize && totalPages <= 1) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-4 py-3">
+      <p className="text-xs text-gray-500">
+        Showing {from}-{to} of {total}
+      </p>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className={btnSecondaryClass}
+          disabled={page <= 1}
+          onClick={() => onPageChange(page - 1)}
+        >
+          Previous
+        </button>
+        <span className="text-xs font-medium text-gray-600">
+          Page {page} of {totalPages}
+        </span>
+        <button
+          type="button"
+          className={btnSecondaryClass}
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(page + 1)}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function Badge({
   children,
   tone = "gray",
