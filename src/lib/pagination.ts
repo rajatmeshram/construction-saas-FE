@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 export const DEFAULT_TABLE_PAGE_SIZE = 10;
 
@@ -20,11 +20,15 @@ export function useTablePage<T>(
   options?: { pageSize?: number; resetKey?: string | number | boolean | null },
 ): TablePageState<T> {
   const pageSize = options?.pageSize ?? DEFAULT_TABLE_PAGE_SIZE;
+  const resetToken = `${options?.resetKey ?? ""}::${pageSize}::${rows.length}`;
   const [page, setPage] = useState(1);
+  const [seenToken, setSeenToken] = useState(resetToken);
 
-  useEffect(() => {
+  // Reset to page 1 when filters/page size/row count change (no effect needed).
+  if (seenToken !== resetToken) {
+    setSeenToken(resetToken);
     setPage(1);
-  }, [options?.resetKey, pageSize, rows.length]);
+  }
 
   return useMemo(() => {
     const total = rows.length;
