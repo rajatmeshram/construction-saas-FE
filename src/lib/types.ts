@@ -23,6 +23,15 @@ export type DashboardMetrics = {
   status_breakdown: Array<{ status: string; total: number }>;
   attendance_trend: Array<{ date: string; label: string; present: number; hours: number }>;
   spend_breakdown: Array<{ name: string; value: number }>;
+  upcoming_machinery_expiries?: Array<{
+    id: number;
+    name: string;
+    vehicle_number: string;
+    document: string;
+    document_key: string;
+    expiry_date: string;
+    days_left: number;
+  }>;
 };
 
 export type AttendanceRecord = {

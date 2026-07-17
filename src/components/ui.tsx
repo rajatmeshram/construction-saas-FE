@@ -248,7 +248,7 @@ export function Badge({
     blue: "bg-blue-50 text-blue-700",
   };
   return (
-    <span className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-medium ${tones[tone]}`}>{children}</span>
+    <span className={`inline-flex w-fit rounded-md px-2 py-0.5 text-[11px] font-medium ${tones[tone]}`}>{children}</span>
   );
 }
 

@@ -3235,31 +3235,31 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                           <p className="text-gray-500">{item.registration_number}</p>
                         </DataTableCell>
                         <DataTableCell>
-                          <div className="flex flex-col gap-1">
+                          <div className="flex flex-col items-start gap-1">
                             <span className="text-xs text-gray-600">{formatShortDate(item.insurance_expiry_date)}</span>
                             {item.insurance_expiry_date && <Badge tone={expiryBadgeTone(item.insurance_expiry_date)}>{expiryBadgeTone(item.insurance_expiry_date) === "red" ? "Expired" : expiryBadgeTone(item.insurance_expiry_date) === "amber" ? "Soon" : "OK"}</Badge>}
                           </div>
                         </DataTableCell>
                         <DataTableCell>
-                          <div className="flex flex-col gap-1">
+                          <div className="flex flex-col items-start gap-1">
                             <span className="text-xs text-gray-600">{formatShortDate(item.permit_expiry_date)}</span>
                             {item.permit_expiry_date && <Badge tone={expiryBadgeTone(item.permit_expiry_date)}>{expiryBadgeTone(item.permit_expiry_date) === "red" ? "Expired" : expiryBadgeTone(item.permit_expiry_date) === "amber" ? "Soon" : "OK"}</Badge>}
                           </div>
                         </DataTableCell>
                         <DataTableCell>
-                          <div className="flex flex-col gap-1">
+                          <div className="flex flex-col items-start gap-1">
                             <span className="text-xs text-gray-600">{formatShortDate(item.fitness_validity_date)}</span>
                             {item.fitness_validity_date && <Badge tone={expiryBadgeTone(item.fitness_validity_date)}>{expiryBadgeTone(item.fitness_validity_date) === "red" ? "Expired" : expiryBadgeTone(item.fitness_validity_date) === "amber" ? "Soon" : "OK"}</Badge>}
                           </div>
                         </DataTableCell>
                         <DataTableCell>
-                          <div className="flex flex-col gap-1">
+                          <div className="flex flex-col items-start gap-1">
                             <span className="text-xs text-gray-600">{formatShortDate(item.puc_date)}</span>
                             {item.puc_date && <Badge tone={expiryBadgeTone(item.puc_date)}>{expiryBadgeTone(item.puc_date) === "red" ? "Expired" : expiryBadgeTone(item.puc_date) === "amber" ? "Soon" : "OK"}</Badge>}
                           </div>
                         </DataTableCell>
                         <DataTableCell>
-                          <div className="flex flex-col gap-1">
+                          <div className="flex flex-col items-start gap-1">
                             <span className="text-xs text-gray-600">{formatShortDate(item.green_tax_date)}</span>
                             {item.green_tax_date && <Badge tone={expiryBadgeTone(item.green_tax_date)}>{expiryBadgeTone(item.green_tax_date) === "red" ? "Expired" : expiryBadgeTone(item.green_tax_date) === "amber" ? "Soon" : "OK"}</Badge>}
                           </div>
@@ -3632,14 +3632,8 @@ function OverviewPage() {
     queryFn: api.dashboard,
     enabled: queryEnabled,
   });
-  const attendance = useQuery<Paginated<AttendanceRecord>>({
-    queryKey: ["attendance"],
-    queryFn: () => api.attendance(),
-    enabled: queryEnabled,
-  });
 
   const data = metrics.data;
-  const recentAttendance = attendance.data?.results ?? [];
 
   return (
     <>
@@ -3669,55 +3663,37 @@ function OverviewPage() {
             </div>
           </div>
         </ContentCard>
-        <ContentCard title="Quick Links" subtitle="Phase 1 modules">
-          <ul className="space-y-2 text-sm text-gray-600">
-            <li>Projects — assign teams and track budgets</li>
-            <li>Labour — manage workers and attendance</li>
-            <li>Payroll — wages, advances, salary sheets</li>
-            <li>Machinery — fuel logs and maintenance</li>
+        <ContentCard
+          title="Machinery expiring soon"
+          subtitle="Insurance, permit, fitness, PUC & green tax in next 5 days"
+        >
+          <ul className="divide-y divide-gray-100">
+            {(data?.upcoming_machinery_expiries ?? []).map((item) => (
+              <li key={`${item.id}-${item.document_key}`} className="flex items-start justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
+                <div className="min-w-0">
+                  <Link href={`/machinery/${item.id}`} className="text-sm font-medium text-gray-900 hover:text-violet-700 hover:underline">
+                    {item.name}
+                  </Link>
+                  <p className="text-xs text-gray-500">
+                    {item.document} · {item.vehicle_number || "—"} · {formatShortDate(item.expiry_date)}
+                  </p>
+                </div>
+                <Badge tone={item.days_left <= 2 ? "red" : "amber"}>
+                  {item.days_left === 0 ? "Today" : item.days_left === 1 ? "1 day" : `${item.days_left} days`}
+                </Badge>
+              </li>
+            ))}
+            {!(data?.upcoming_machinery_expiries ?? []).length && (
+              <li className="py-6 text-center text-sm text-gray-500">No machinery documents expiring in the next 5 days.</li>
+            )}
           </ul>
+          <div className="mt-3 border-t border-gray-100 pt-3">
+            <Link href="/machinery" className="text-sm font-medium text-violet-700 hover:underline">
+              View all machinery →
+            </Link>
+          </div>
         </ContentCard>
       </section>
-
-      <ContentCard title="Recent Attendance" className="mt-4">
-        <DataTable>
-          <DataTableHead>
-            <tr>
-              <th className="px-4 py-2.5">Worker</th>
-              <th className="px-4 py-2.5">Project</th>
-              <th className="px-4 py-2.5">Status</th>
-              <th className="px-4 py-2.5">Punch In</th>
-              <th className="px-4 py-2.5">Approval</th>
-            </tr>
-          </DataTableHead>
-          <DataTableBody>
-            {recentAttendance.slice(0, 8).map((record, i) => (
-              <DataTableRow key={record.id} zebra={i % 2 === 1}>
-                <DataTableCell className="font-medium text-gray-900">
-                  <Link href={`/attendance/${record.id}`} className="hover:text-violet-700 hover:underline">
-                    {record.labour_name || "Worker"}
-                  </Link>
-                </DataTableCell>
-                <DataTableCell>{record.project_name}</DataTableCell>
-                <DataTableCell>{record.status.replace("_", " ")}</DataTableCell>
-                <DataTableCell className="text-xs">{formatDateTime(record.punch_in_at)}</DataTableCell>
-                <DataTableCell>
-                  <Badge tone={record.approval_status === "APPROVED" ? "green" : record.approval_status === "PENDING" ? "amber" : "red"}>
-                    {record.approval_status}
-                  </Badge>
-                </DataTableCell>
-              </DataTableRow>
-            ))}
-            {!recentAttendance.length && (
-              <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-sm text-gray-500">
-                  No attendance records yet.
-                </td>
-              </tr>
-            )}
-          </DataTableBody>
-        </DataTable>
-      </ContentCard>
     </>
   );
 }
