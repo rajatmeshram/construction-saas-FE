@@ -10,6 +10,23 @@ export type AuthUser = {
   assigned_projects?: AssignedProject[];
 };
 
+export type AttendanceActivityItem = {
+  id: string;
+  marker_id: number;
+  marker_name: string;
+  marker_role: UserRole;
+  employee_count: number;
+  labour_ids: number[];
+  record_ids: number[];
+  marked_at: string;
+  project_id: number | null;
+  project_name: string;
+  project_location: string;
+  latitude: string | null;
+  longitude: string | null;
+  entry_type: string;
+};
+
 export type DashboardMetrics = {
   total_projects: number;
   active_projects: number;
@@ -21,7 +38,8 @@ export type DashboardMetrics = {
     actual: string | null;
   };
   status_breakdown: Array<{ status: string; total: number }>;
-  attendance_trend: Array<{ date: string; label: string; present: number; hours: number }>;
+  attendance_trend?: Array<{ date: string; label: string; present: number; hours: number }>;
+  attendance_activity?: AttendanceActivityItem[];
   spend_breakdown: Array<{ name: string; value: number }>;
   upcoming_machinery_expiries?: Array<{
     id: number;
@@ -56,6 +74,8 @@ export type AttendanceRecord = {
   attendance_mark?: "PRESENT" | "ABSENT" | "HALF_DAY";
   workday_value?: number | string;
   notes?: string;
+  attendance_by?: string | null;
+  approved_by?: number | null;
 };
 
 export type AssignedProject = {
@@ -69,10 +89,11 @@ export type LabourProfile = {
   id: number;
   user_id: number;
   full_name: string;
-  mobile_number: string;
+  mobile_number: string | null;
   username: string;
   email: string;
   employee_id: string | null;
+  designation: "LABOUR" | "DRIVER";
   salary: string;
   daily_salary: string | null;
   resolved_daily_wage: string;
@@ -179,6 +200,7 @@ export type Salary = {
   id: number;
   labour: number;
   labour_name: string;
+  week?: number | null;
   month: number;
   year: number;
   period_start: string;
@@ -193,6 +215,96 @@ export type Salary = {
   paid_at: string | null;
   paid_by: number | null;
   paid_by_name?: string;
+};
+
+export type PayrollDayHeader = {
+  key: string;
+  label: string;
+  date_label: string;
+  date: string;
+};
+
+export type PayrollWeekLine = {
+  id: number;
+  user: number;
+  user_name: string;
+  rate: string;
+  total_days: string;
+  advances: string;
+  gross: string;
+  net: string;
+  day_marks: Record<string, string>;
+  salary_id: number | null;
+  payment_status: "PENDING" | "PAID" | null;
+};
+
+export type PayrollWeekListItem = {
+  id: number;
+  label: string;
+  week_start: string;
+  week_end: string;
+  year: number;
+  month: number;
+  week_number: number;
+  generated_at: string;
+  line_count: number;
+  pending_count: number;
+  paid_count: number;
+  total_net: string | null;
+};
+
+export type PayrollWeekDetail = {
+  id: number;
+  label: string;
+  week_start: string;
+  week_end: string;
+  year: number;
+  month: number;
+  week_number: number;
+  generated_at: string;
+  day_headers: PayrollDayHeader[];
+  lines: PayrollWeekLine[];
+  total_net: string;
+};
+
+export type PayrollSiteLine = {
+  id: number;
+  user: number;
+  user_name: string;
+  rate: string;
+  total_days: string;
+  advances: string;
+  amount: string;
+  day_marks: Record<string, string>;
+};
+
+export type PayrollSiteSheetListItem = {
+  id: number;
+  label: string;
+  week: number;
+  week_label: string;
+  week_start: string;
+  week_end: string;
+  project: number;
+  project_name: string;
+  supervisor_name: string;
+  line_count: number;
+  total_amount: string | null;
+};
+
+export type PayrollSiteSheetDetail = {
+  id: number;
+  label: string;
+  week: number;
+  week_label: string;
+  week_start: string;
+  week_end: string;
+  project: number;
+  project_name: string;
+  supervisor_name: string;
+  day_headers: PayrollDayHeader[];
+  lines: PayrollSiteLine[];
+  total_amount: string;
 };
 
 export type UserMini = {

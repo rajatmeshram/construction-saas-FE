@@ -13,6 +13,8 @@ import {
   Timer,
   Truck,
   Users,
+  Wallet,
+  IndianRupee,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
@@ -24,7 +26,14 @@ import { pageBg } from "@/components/ui";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearSession } from "@/store/auth-slice";
 
-type NavItem = { href: string; label: string; icon: LucideIcon; match?: (path: string) => boolean };
+type NavChild = { href: string; label: string; match?: (path: string) => boolean };
+type NavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  match?: (path: string) => boolean;
+  children?: NavChild[];
+};
 type NavGroup = { title: string; items: NavItem[] };
 
 const PAGE_TITLES: Record<string, string> = {
@@ -38,11 +47,11 @@ const PAGE_TITLES: Record<string, string> = {
   "/attendance/bulk": "Bulk Attendance",
   "/attendance/history": "Attendance Records",
   "/payroll": "Payroll",
+  "/payroll/wages": "Update Wages",
+  "/payroll/advances": "Record Advance",
   "/reports": "Reports",
-  "/workers": "Labour",
-  "/people": "People",
-  "/labour": "My Labour App",
-  "/supervisor/attendance": "My Attendance",
+  "/workers": "Employee",
+  "/labour": "My Employee App",
 };
 
 function pageTitle(pathname: string) {
@@ -50,10 +59,16 @@ function pageTitle(pathname: string) {
   if (pathname === "/attendance/bulk") return "Bulk Attendance";
   if (pathname === "/attendance/history") return "Attendance Records";
   if (pathname.startsWith("/attendance/")) return "Attendance Detail";
+  if (pathname.startsWith("/payroll/sheets/")) return "Salary Sheet";
+  if (pathname.startsWith("/payroll/site-sheets/")) return "Site Salary Sheet";
   if (pathname.startsWith("/workers/") && pathname.endsWith("/history")) return "Attendance History";
-  if (pathname.startsWith("/workers/")) return "Labour Profile";
+  if (pathname.startsWith("/workers/")) return "Employee Profile";
+  if (pathname.startsWith("/machinery/") && pathname.endsWith("/fuel-logs")) return "Fuel Logs";
+  if (pathname.startsWith("/machinery/") && pathname.endsWith("/usage")) return "Usage History";
+  if (pathname.startsWith("/machinery/") && pathname.endsWith("/maintenance")) return "Maintenance History";
   if (pathname.startsWith("/machinery/") && pathname !== "/machinery") return "Machinery Detail";
   if (pathname.startsWith("/supervisors/")) return "Supervisor Profile";
+  if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
   for (const [href, title] of Object.entries(PAGE_TITLES)) {
     if (pathname === href || pathname.startsWith(`${href}/`)) return title;
   }
@@ -84,6 +99,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
   }
 
   const canManage = user.role === "SUPER_ADMIN" || user.role === "SUPERVISOR";
+  const isSuperAdmin = user.role === "SUPER_ADMIN";
 
   const groups: NavGroup[] = [
     {
@@ -96,9 +112,20 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
             title: "Manage",
             items: [
               { href: "/projects", label: "Projects", icon: Building2, match: (p: string) => p.startsWith("/projects") },
-              { href: "/workers", label: "Labour", icon: Users, match: (p: string) => p.startsWith("/workers") },
+              { href: "/workers", label: "Employee", icon: Users, match: (p: string) => p.startsWith("/workers") },
               { href: "/attendance", label: "Attendance", icon: Timer, match: (p: string) => p.startsWith("/attendance") },
-              { href: "/payroll", label: "Payroll", icon: Banknote },
+              {
+                href: "/payroll",
+                label: "Payroll",
+                icon: Banknote,
+                match: (p: string) => p === "/payroll" || p.startsWith("/payroll/sheets") || p.startsWith("/payroll/site-sheets"),
+                children: isSuperAdmin
+                  ? [
+                      { href: "/payroll/wages", label: "Update Wages", match: (p: string) => p.startsWith("/payroll/wages") },
+                      { href: "/payroll/advances", label: "Record Advance", match: (p: string) => p.startsWith("/payroll/advances") },
+                    ]
+                  : undefined,
+              },
             ],
           },
           {
@@ -113,18 +140,12 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
           },
         ]
       : []),
-    ...(user.role === "SUPER_ADMIN"
-      ? [{ title: "Admin", items: [{ href: "/people", label: "People", icon: Users }] }]
-      : []),
-    ...(user.role === "SUPERVISOR"
-      ? [{ title: "Self", items: [{ href: "/supervisor/attendance", label: "My Attendance", icon: Timer }] }]
-      : []),
     ...(user.role === "LABOUR"
-      ? [{ title: "Self", items: [{ href: "/labour", label: "My Labour App", icon: HardHat }] }]
+      ? [{ title: "Self", items: [{ href: "/labour", label: "My Employee App", icon: HardHat }] }]
       : []),
   ];
 
-  function isActive(item: NavItem) {
+  function isActive(item: NavItem | NavChild) {
     if (item.match) return item.match(pathname);
     return pathname === item.href;
   }
@@ -159,20 +180,49 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                   {group.items.map((item) => {
                     const Icon = item.icon;
                     const active = isActive(item);
+                    const childActive = item.children?.some((child) => isActive(child));
                     return (
-                      <Link
-                        key={item.href}
-                        href={item.href}
-                        className={`relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
-                          active
-                            ? "bg-violet-100/80 font-medium text-violet-800"
-                            : "text-gray-600 hover:bg-white hover:text-gray-900"
-                        }`}
-                      >
-                        {active && <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-violet-600" />}
-                        <Icon className="h-4 w-4 shrink-0" />
-                        <span className="truncate">{item.label}</span>
-                      </Link>
+                      <div key={item.href}>
+                        <Link
+                          href={item.href}
+                          className={`relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
+                            active || childActive
+                              ? "bg-violet-100/80 font-medium text-violet-800"
+                              : "text-gray-600 hover:bg-white hover:text-gray-900"
+                          }`}
+                        >
+                          {(active || childActive) && (
+                            <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-violet-600" />
+                          )}
+                          <Icon className="h-4 w-4 shrink-0" />
+                          <span className="truncate">{item.label}</span>
+                        </Link>
+                        {item.children?.length ? (
+                          <div className="ml-4 mt-0.5 space-y-0.5 border-l border-gray-200 pl-2">
+                            {item.children.map((child) => {
+                              const childIsActive = isActive(child);
+                              return (
+                                <Link
+                                  key={child.href}
+                                  href={child.href}
+                                  className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition ${
+                                    childIsActive
+                                      ? "bg-violet-50 font-medium text-violet-800"
+                                      : "text-gray-500 hover:bg-white hover:text-gray-800"
+                                  }`}
+                                >
+                                  {child.href.includes("wages") ? (
+                                    <IndianRupee className="h-3.5 w-3.5 shrink-0" />
+                                  ) : (
+                                    <Wallet className="h-3.5 w-3.5 shrink-0" />
+                                  )}
+                                  <span className="truncate">{child.label}</span>
+                                </Link>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
                     );
                   })}
                 </div>
@@ -195,7 +245,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
           <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/90 px-6 py-3 backdrop-blur">
             <h1 className="text-lg font-semibold text-gray-900">{title}</h1>
             <p className="text-xs text-gray-500">
-              {user.full_name || user.username} · {user.role.replace("_", " ")}
+              {user.full_name || user.username} · {(user.role === "LABOUR" ? "EMPLOYEE" : user.role).replace("_", " ")}
             </p>
           </header>
           <section className="flex-1 px-6 py-5">{children}</section>

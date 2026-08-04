@@ -6,7 +6,7 @@ import { Providers } from "@/app/providers";
 
 export const metadata: Metadata = {
   title: "Hitesh Construction",
-  description: "Construction SaaS Phase 1 dashboard and labour attendance app.",
+  description: "Construction SaaS Phase 1 dashboard and employee attendance app.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

@@ -21,6 +21,10 @@ import type {
   ProjectTask,
   Salary,
   SalaryProfile,
+  PayrollWeekListItem,
+  PayrollWeekDetail,
+  PayrollSiteSheetListItem,
+  PayrollSiteSheetDetail,
   SupervisorSummary,
   TaskMaterial,
   Vendor,
@@ -42,9 +46,20 @@ function formatApiError(error: Record<string, unknown>): string {
   if (Array.isArray(error.non_field_errors) && error.non_field_errors[0]) {
     return String(error.non_field_errors[0]);
   }
+  const fieldLabels: Record<string, string> = {
+    mobile_number: "Mobile",
+    full_name: "Full name",
+    employee_id: "Employee ID",
+    daily_salary: "Per day salary",
+    joining_date: "Joining date",
+  };
   const fieldMessages = Object.entries(error).flatMap(([key, value]) => {
+    const label = fieldLabels[key] ?? key.replace(/_/g, " ");
     if (Array.isArray(value) && value[0]) {
-      return [`${key}: ${value[0]}`];
+      return [`${label}: ${value[0]}`];
+    }
+    if (typeof value === "string") {
+      return [`${label}: ${value}`];
     }
     return [];
   });
@@ -170,6 +185,70 @@ type CreateTaskPayload = {
   assigned_labours: number[];
 };
 
+type MachineryFormPayload = {
+  name: string;
+  machine_type: string;
+  registration_number: string;
+  vehicle_number?: string;
+  vehicle_class?: string;
+  chassis_number?: string;
+  engine_number?: string;
+  insurance_provider?: string;
+  insurance_policy_number?: string;
+  insurance_start_date?: string;
+  insurance_expiry_date?: string;
+  permit_number?: string;
+  permit_issue_date?: string;
+  permit_expiry_date?: string;
+  fitness_validity_date?: string;
+  puc_date?: string;
+  mv_tax_validity_date?: string;
+  green_tax_date?: string;
+  hsrp_done?: boolean;
+  avg_km_per_liter?: string;
+  avg_hours_per_liter?: string;
+  notes?: string;
+  active?: boolean;
+  document_type?: string;
+  documents?: File[];
+};
+
+function buildMachineryFormData(payload: MachineryFormPayload, options?: { clearEmpty?: boolean }) {
+  const formData = new FormData();
+  const clearEmpty = options?.clearEmpty === true;
+  const appendText = (key: string, value?: string) => {
+    if (value) formData.append(key, value);
+    else if (clearEmpty) formData.append(key, "");
+  };
+
+  formData.append("name", payload.name);
+  formData.append("machine_type", payload.machine_type);
+  formData.append("registration_number", payload.registration_number);
+  appendText("vehicle_number", payload.vehicle_number);
+  appendText("vehicle_class", payload.vehicle_class);
+  appendText("chassis_number", payload.chassis_number);
+  appendText("engine_number", payload.engine_number);
+  appendText("insurance_provider", payload.insurance_provider);
+  appendText("insurance_policy_number", payload.insurance_policy_number);
+  appendText("insurance_start_date", payload.insurance_start_date);
+  appendText("insurance_expiry_date", payload.insurance_expiry_date);
+  appendText("permit_number", payload.permit_number);
+  appendText("permit_issue_date", payload.permit_issue_date);
+  appendText("permit_expiry_date", payload.permit_expiry_date);
+  appendText("fitness_validity_date", payload.fitness_validity_date);
+  appendText("puc_date", payload.puc_date);
+  appendText("mv_tax_validity_date", payload.mv_tax_validity_date);
+  appendText("green_tax_date", payload.green_tax_date);
+  formData.append("hsrp_done", payload.hsrp_done ? "true" : "false");
+  appendText("avg_km_per_liter", payload.avg_km_per_liter);
+  appendText("avg_hours_per_liter", payload.avg_hours_per_liter);
+  appendText("notes", payload.notes);
+  formData.append("active", payload.active === false ? "false" : "true");
+  if (payload.document_type) formData.append("document_type", payload.document_type);
+  payload.documents?.forEach((file) => formData.append("documents", file));
+  return formData;
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ access: string; refresh: string; user: AuthUser }>("/auth/login/", {
@@ -271,10 +350,16 @@ export const api = {
   },
   deleteProjectDocument: (id: number) =>
     request<void>(`/projects/documents/${id}/`, { method: "DELETE" }),
-  machineryUsage: (projectId?: number) =>
+  machineryUsage: (params?: { projectId?: number; machinery?: number }) =>
     request<{ results?: MachineryUsage[] }>(
-      `/operations/machinery-usage/${buildListQuery({ project: projectId })}`,
+      `/operations/machinery-usage/${buildListQuery({
+        project: params?.projectId,
+        machinery: params?.machinery,
+        page_size: 200,
+      })}`,
     ),
+  exportMachineryUsage: (machineryId: number, filename: string) =>
+    downloadRequest(`/operations/machinery-usage/export/?machinery=${machineryId}`, filename),
   currentAttendance: () =>
     request<{ active: boolean; attendance?: AttendanceRecord }>("/attendance/records/current/"),
   punchIn: (payload: {
@@ -301,12 +386,28 @@ export const api = {
     if (lng != null) formData.append("punch_out_longitude", String(lng));
     return request<AttendanceRecord>("/attendance/records/punch_out/", { method: "POST", body: formData });
   },
-  attendance: (projectId?: number, status?: AttendanceRecord["status"], labourId?: number) => {
+  attendance: (params?: {
+    projectId?: number;
+    status?: AttendanceRecord["status"];
+    labourId?: number;
+    ids?: string | number[];
+    labour_ids?: string | number[];
+    approved_by?: number;
+    marked_at?: string;
+    project?: number;
+  }) => {
+    const ids = Array.isArray(params?.ids) ? params.ids.join(",") : params?.ids;
+    const labourIds = Array.isArray(params?.labour_ids) ? params.labour_ids.join(",") : params?.labour_ids;
     return request<{ results?: AttendanceRecord[] }>(
       `/attendance/records/${buildListQuery({
-        project: projectId,
-        status,
-        labour: labourId,
+        project: params?.project ?? params?.projectId,
+        status: params?.status,
+        labour: params?.labourId,
+        ids,
+        labour_ids: labourIds,
+        approved_by: params?.approved_by,
+        marked_at: params?.marked_at,
+        page_size: 200,
       })}`,
     );
   },
@@ -338,20 +439,24 @@ export const api = {
     }),
   generateSalary: (payload: {
     labour: number;
-    month: number;
-    year: number;
+    month?: number;
+    year?: number;
     deductions?: string;
     till_date?: string;
+    period_start?: string;
+    period_end?: string;
   }) =>
     request<Salary>("/payroll/salaries/generate/", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
   generateAllSalaries: (payload: {
-    month: number;
-    year: number;
+    month?: number;
+    year?: number;
     deductions?: string;
     till_date?: string;
+    period_start?: string;
+    period_end?: string;
   }) =>
     request<{
       created_count: number;
@@ -364,23 +469,75 @@ export const api = {
     }),
   markSalaryPaid: (id: number) =>
     request<Salary>(`/payroll/salaries/${id}/mark_paid/`, { method: "POST" }),
-  salaries: (params?: { month?: number; year?: number; labour?: number }) => {
-    return request<{ results?: Salary[] }>(
+  salaries: (params?: {
+    month?: number;
+    year?: number;
+    labour?: number;
+    period_start?: string;
+    period_end?: string;
+    page_size?: number;
+  }) => {
+    return request<{ results?: Salary[]; count?: number }>(
       `/payroll/salaries/${buildListQuery({
         month: params?.month,
         year: params?.year,
         labour: params?.labour,
+        period_start: params?.period_start,
+        period_end: params?.period_end,
+        page_size: params?.page_size ?? 200,
       })}`,
     );
   },
-  exportSalaries: (params: { month: number; year: number }) => {
-    const query = new URLSearchParams({
-      month: String(params.month),
-      year: String(params.year),
-    });
-    return downloadRequest(`/payroll/salaries/export/?${query.toString()}`, `payroll_${params.year}_${String(params.month).padStart(2, "0")}.xlsx`);
+  exportSalaries: (params: { month?: number; year?: number; period_start?: string; period_end?: string }) => {
+    const query = new URLSearchParams();
+    if (params.period_start && params.period_end) {
+      query.set("period_start", params.period_start);
+      query.set("period_end", params.period_end);
+      return downloadRequest(
+        `/payroll/salaries/export/?${query.toString()}`,
+        `payroll_${params.period_start}_${params.period_end}.xlsx`,
+      );
+    }
+    if (params.month == null || params.year == null) {
+      return Promise.reject(new Error("Provide period dates or month and year."));
+    }
+    query.set("month", String(params.month));
+    query.set("year", String(params.year));
+    return downloadRequest(
+      `/payroll/salaries/export/?${query.toString()}`,
+      `payroll_${params.year}_${String(params.month).padStart(2, "0")}.xlsx`,
+    );
   },
   salary: (id: number) => request<Salary>(`/payroll/salaries/${id}/`),
+  payrollWeeks: () =>
+    request<{ results?: PayrollWeekListItem[]; count?: number }>(
+      `/payroll/weeks/${buildListQuery({ page_size: 200, ordering: "-week_end" })}`,
+    ),
+  payrollWeek: (id: number) => request<PayrollWeekDetail>(`/payroll/weeks/${id}/`),
+  generateWeeklyPayroll: (payload?: {
+    week_end?: string;
+    period_start?: string;
+    period_end?: string;
+    labour?: number;
+  }) =>
+    request<PayrollWeekDetail & {
+      created_salaries: number;
+      site_sheet_count: number;
+      skipped_count: number;
+      skipped: Array<{ user_id: number; user_name: string; error: string }>;
+    }>("/payroll/weeks/generate/", {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    }),
+  exportPayrollWeek: (id: number, filename: string) =>
+    downloadRequest(`/payroll/weeks/${id}/export/`, filename),
+  payrollSiteSheets: () =>
+    request<{ results?: PayrollSiteSheetListItem[]; count?: number }>(
+      `/payroll/site-sheets/${buildListQuery({ page_size: 200, ordering: "-week__week_end" })}`,
+    ),
+  payrollSiteSheet: (id: number) => request<PayrollSiteSheetDetail>(`/payroll/site-sheets/${id}/`),
+  exportPayrollSiteSheet: (id: number, filename: string) =>
+    downloadRequest(`/payroll/site-sheets/${id}/export/`, filename),
   vendors: () => request<{ results?: Vendor[] }>(`/operations/vendors/${buildListQuery()}`),
   createVendor: (payload: {
     name: string;
@@ -442,6 +599,16 @@ export const api = {
     request<Expense>(`/operations/expenses/${id}/${action}/`, { method: "POST" }),
   machinery: () => request<{ results?: Machinery[] }>(`/operations/machinery/${buildListQuery()}`),
   machineryItem: (id: number) => request<Machinery>(`/operations/machinery/${id}/`),
+  deleteMachinery: (id: number) => request<void>(`/operations/machinery/${id}/`, { method: "DELETE" }),
+  bulkDeleteMachinery: (ids: number[]) =>
+    request<{
+      deleted_count: number;
+      skipped_count: number;
+      skipped: Array<{ id: number; error: string }>;
+    }>("/operations/machinery/bulk_delete/", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
   createMachinery: (payload: {
     name: string;
     machine_type: string;
@@ -469,33 +636,39 @@ export const api = {
     document_type?: string;
     documents?: File[];
   }) => {
-    const formData = new FormData();
-    formData.append("name", payload.name);
-    formData.append("machine_type", payload.machine_type);
-    formData.append("registration_number", payload.registration_number);
-    if (payload.vehicle_number) formData.append("vehicle_number", payload.vehicle_number);
-    if (payload.vehicle_class) formData.append("vehicle_class", payload.vehicle_class);
-    if (payload.chassis_number) formData.append("chassis_number", payload.chassis_number);
-    if (payload.engine_number) formData.append("engine_number", payload.engine_number);
-    if (payload.insurance_provider) formData.append("insurance_provider", payload.insurance_provider);
-    if (payload.insurance_policy_number) formData.append("insurance_policy_number", payload.insurance_policy_number);
-    if (payload.insurance_start_date) formData.append("insurance_start_date", payload.insurance_start_date);
-    if (payload.insurance_expiry_date) formData.append("insurance_expiry_date", payload.insurance_expiry_date);
-    if (payload.permit_number) formData.append("permit_number", payload.permit_number);
-    if (payload.permit_issue_date) formData.append("permit_issue_date", payload.permit_issue_date);
-    if (payload.permit_expiry_date) formData.append("permit_expiry_date", payload.permit_expiry_date);
-    if (payload.fitness_validity_date) formData.append("fitness_validity_date", payload.fitness_validity_date);
-    if (payload.puc_date) formData.append("puc_date", payload.puc_date);
-    if (payload.mv_tax_validity_date) formData.append("mv_tax_validity_date", payload.mv_tax_validity_date);
-    if (payload.green_tax_date) formData.append("green_tax_date", payload.green_tax_date);
-    formData.append("hsrp_done", payload.hsrp_done ? "true" : "false");
-    if (payload.avg_km_per_liter) formData.append("avg_km_per_liter", payload.avg_km_per_liter);
-    if (payload.avg_hours_per_liter) formData.append("avg_hours_per_liter", payload.avg_hours_per_liter);
-    if (payload.notes) formData.append("notes", payload.notes);
-    formData.append("active", payload.active === false ? "false" : "true");
-    if (payload.document_type) formData.append("document_type", payload.document_type);
-    payload.documents?.forEach((file) => formData.append("documents", file));
+    const formData = buildMachineryFormData(payload);
     return request<Machinery>("/operations/machinery/", { method: "POST", body: formData });
+  },
+  updateMachinery: (
+    id: number,
+    payload: {
+      name: string;
+      machine_type: string;
+      registration_number: string;
+      vehicle_number?: string;
+      vehicle_class?: string;
+      chassis_number?: string;
+      engine_number?: string;
+      insurance_provider?: string;
+      insurance_policy_number?: string;
+      insurance_start_date?: string;
+      insurance_expiry_date?: string;
+      permit_number?: string;
+      permit_issue_date?: string;
+      permit_expiry_date?: string;
+      fitness_validity_date?: string;
+      puc_date?: string;
+      mv_tax_validity_date?: string;
+      green_tax_date?: string;
+      hsrp_done?: boolean;
+      avg_km_per_liter?: string;
+      avg_hours_per_liter?: string;
+      notes?: string;
+      active?: boolean;
+    },
+  ) => {
+    const formData = buildMachineryFormData(payload, { clearEmpty: true });
+    return request<Machinery>(`/operations/machinery/${id}/`, { method: "PATCH", body: formData });
   },
   uploadMachineryDocuments: (id: number, payload: { document_type?: string; documents: File[] }) => {
     const formData = new FormData();
@@ -537,7 +710,16 @@ export const api = {
     payload.bill_photos?.forEach((file) => formData.append("bill_photos", file));
     return request<FuelLog>("/operations/fuel-logs/", { method: "POST", body: formData });
   },
-  fuelLogs: () => request<{ results?: FuelLog[] }>(`/operations/fuel-logs/${buildListQuery()}`),
+  fuelLogs: (params?: { machinery?: number }) =>
+    request<{ results?: FuelLog[] }>(
+      `/operations/fuel-logs/${buildListQuery({ machinery: params?.machinery, page_size: 200 })}`,
+    ),
+  lastFuelMeter: (machineryId: number) =>
+    request<{ previous_meter_reading: string; current_meter_reading: string | null; logged_date?: string }>(
+      `/operations/fuel-logs/last_meter/?machinery=${machineryId}`,
+    ),
+  exportFuelLogs: (machineryId: number, filename: string) =>
+    downloadRequest(`/operations/fuel-logs/export/?machinery=${machineryId}`, filename),
   createMaintenance: (payload: { machinery: number; service_date: string; details: string; cost: string; next_service_due: string }) =>
     request("/operations/maintenance/", {
       method: "POST",
@@ -545,8 +727,10 @@ export const api = {
     }),
   maintenance: (machineryId?: number) =>
     request<{ results?: MachineryMaintenance[] }>(
-      `/operations/maintenance/${buildListQuery({ machinery: machineryId })}`,
+      `/operations/maintenance/${buildListQuery({ machinery: machineryId, page_size: 200 })}`,
     ),
+  exportMaintenance: (machineryId: number, filename: string) =>
+    downloadRequest(`/operations/maintenance/export/?machinery=${machineryId}`, filename),
   reports: () => request<OperationsReport>("/operations/reports/"),
   labourWorkers: (params?: { name?: string; mobile?: string; page?: number; page_size?: number; ordering?: string }) => {
     return request<{ count: number; next: string | null; previous: string | null; results: LabourProfile[] }>(
@@ -569,11 +753,12 @@ export const api = {
     return request<Salary[]>(`/labour/workers/${id}/salaries${suffix}`);
   },
   createLabourWorker: (payload: {
-    full_name: string;
-    mobile_number: string;
-    salary: string;
+    full_name?: string;
+    mobile_number?: string;
+    salary?: string;
     daily_salary?: string | null;
     employee_id?: string;
+    designation?: "LABOUR" | "DRIVER";
     status?: "ACTIVE" | "INACTIVE";
     joining_date?: string;
     username?: string;
@@ -592,6 +777,7 @@ export const api = {
       salary: string;
       daily_salary: string | null;
       employee_id: string;
+      designation: "LABOUR" | "DRIVER";
       status: "ACTIVE" | "INACTIVE";
       joining_date: string;
     }>,
@@ -622,11 +808,8 @@ export const api = {
   },
   supervisorProfile: (id: number) => request<SupervisorSummary>(`/labour/supervisors/${id}/profile/`),
   salaryProfiles: (labourId?: number) => {
-    const params = new URLSearchParams();
-    if (labourId) params.set("labour", String(labourId));
-    const query = params.toString();
     return request<{ results?: SalaryProfile[] }>(
-      query ? `/payroll/profiles/?${query}` : "/payroll/profiles/",
+      `/payroll/profiles/${buildListQuery({ labour: labourId, page_size: 200 })}`,
     );
   },
   manualAttendance: (payload: {
@@ -647,18 +830,40 @@ export const api = {
   bulkAttendance: (payload: {
     labour_ids: number[];
     project?: number;
-    date: string;
+    date?: string;
+    dates?: string[];
     punch_in_time?: string;
     punch_out_time?: string;
     workday_value: number;
     attendance_mark?: "PRESENT" | "ABSENT" | "HALF_DAY";
     extra_hours?: number;
     notes?: string;
+    overwrite?: boolean;
+    latitude?: number;
+    longitude?: number;
   }) =>
-    request<{ created_count: number; skipped_count: number; created_ids: number[]; skipped: Array<{ labour_id: number; error: string }> }>(
-      "/attendance/records/bulk/",
-      { method: "POST", body: JSON.stringify(payload) },
-    ),
+    request<{
+      created_count: number;
+      updated_count?: number;
+      skipped_count: number;
+      created_ids: number[];
+      updated?: Array<{ id: number; labour_id: number; date: string }>;
+      skipped: Array<{
+        labour_id: number;
+        date?: string;
+        error: string;
+        conflict?: boolean;
+        existing_workday?: number | null;
+      }>;
+      conflicts?: Array<{
+        labour_id: number;
+        date?: string;
+        error: string;
+        conflict?: boolean;
+        existing_workday?: number | null;
+      }>;
+      needs_confirmation?: boolean;
+    }>("/attendance/records/bulk/", { method: "POST", body: JSON.stringify(payload) }),
   supervisorPunchIn: (payload: { project: number; latitude?: number; longitude?: number; selfie?: File }) => {
     const formData = new FormData();
     formData.append("project", String(payload.project));

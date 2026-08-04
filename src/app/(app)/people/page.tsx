@@ -1,9 +1,13 @@
 "use client";
 
-import { PeopleManager } from "@/components/modules";
-import { useAppSelector } from "@/store/hooks";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
-export default function PeoplePage() {
-  const user = useAppSelector((state) => state.auth.user);
-  return <PeopleManager user={user} />;
+/** People section removed — redirect to Employee directory. */
+export default function PeopleRedirectPage() {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace("/workers");
+  }, [router]);
+  return null;
 }

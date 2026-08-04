@@ -29,9 +29,9 @@ import {
   Download,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { api } from "@/lib/api";
 import { useTablePage } from "@/lib/pagination";
@@ -80,7 +80,6 @@ import type {
   Project,
   ProjectDocument,
   ProjectTask,
-  Salary,
   UserMini,
   Vendor,
 } from "@/lib/types";
@@ -172,7 +171,7 @@ function SignIn() {
             </div>
             <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">Hitesh Construction</h1>
             <p className="mt-3 max-w-sm text-sm leading-relaxed text-white/70">
-              Project control, labour attendance, payroll, and site operations in one dashboard.
+              Project control, employee attendance, payroll, and site operations in one dashboard.
             </p>
             <div className="mt-6 grid gap-2 sm:grid-cols-3">
               {[
@@ -191,7 +190,7 @@ function SignIn() {
         <form onSubmit={handleSubmit} className="flex flex-col justify-center p-6 md:p-8">
           <p className="text-xs font-medium uppercase tracking-wide text-safety">Sign In</p>
           <h2 className="mt-1 text-sm font-semibold text-coal">Welcome back</h2>
-          <p className="mt-1 text-xs text-gray-500">Admin, supervisor, or labour account.</p>
+          <p className="mt-1 text-xs text-gray-500">Admin, supervisor, or employee account.</p>
           <label className="mt-4 text-xs font-medium text-gray-700">Username</label>
           <input
             className={`${inputClass} mt-1`}
@@ -219,9 +218,28 @@ function SignIn() {
   );
 }
 
-function mapsLink(lat?: string | number | null, lng?: string | number | null) {
+function mapsLink(lat?: string | number | null, lng?: string | number | null, placeQuery?: string | null) {
+  if (lat != null && lng != null && lat !== "" && lng !== "") {
+    // Drop a pin at exact coordinates with close zoom.
+    return `https://www.google.com/maps?q=${encodeURIComponent(`${lat},${lng}`)}&z=18`;
+  }
+  if (placeQuery && placeQuery.trim()) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(placeQuery.trim())}`;
+  }
+  return null;
+}
+
+function osmEmbedUrl(lat?: string | number | null, lng?: string | number | null) {
   if (lat == null || lng == null || lat === "" || lng === "") return null;
-  return `https://www.google.com/maps?q=${lat},${lng}`;
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+  if (Number.isNaN(latitude) || Number.isNaN(longitude)) return null;
+  const delta = 0.004;
+  const minLng = longitude - delta;
+  const minLat = latitude - delta;
+  const maxLng = longitude + delta;
+  const maxLat = latitude + delta;
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${minLng}%2C${minLat}%2C${maxLng}%2C${maxLat}&layer=mapnik&marker=${latitude}%2C${longitude}`;
 }
 
 function mediaUrl(url?: string | null) {
@@ -245,6 +263,18 @@ function calendarDayStyle(workday?: number, hasEntry?: boolean) {
 function formatWorkdayValue(value?: number) {
   if (value == null) return "";
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function attendanceWorkdayBadge(record: AttendanceRecord): { label: string; tone: "red" | "amber" | "green" | "gray" } {
+  const value = Number(
+    record.workday_value ??
+      (record.attendance_mark === "ABSENT" ? 0 : record.attendance_mark === "HALF_DAY" ? 0.5 : record.attendance_mark === "PRESENT" ? 1 : NaN),
+  );
+  if (Number.isNaN(value)) return { label: "—", tone: "gray" };
+  if (value === 0) return { label: "A", tone: "red" };
+  if (value === 0.5) return { label: "H", tone: "amber" };
+  if (value === 1) return { label: "P", tone: "green" };
+  return { label: formatWorkdayValue(value), tone: "green" };
 }
 
 function resolveWorkdayValue(dayData?: MonthlyAttendance["days"][string]): number | undefined {
@@ -364,15 +394,40 @@ function AttendanceProof({
   at?: string | null;
 }) {
   const mapUrl = mapsLink(lat, lng);
+  const embedUrl = osmEmbedUrl(lat, lng);
   return (
     <div className="rounded-md bg-gray-50 p-3 text-sm">
       <p className="text-xs font-bold uppercase tracking-[0.15em] text-gray-500">{label}</p>
       {at && <p className="mt-1 text-gray-600">{formatDateTime(at)}</p>}
-      {lat && lng && <p className="text-gray-600">Location: {lat}, {lng}</p>}
-      {mapUrl && (
-        <a href={mapUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block font-bold text-coal underline">
-          View on map
-        </a>
+      {lat && lng ? (
+        <div className="mt-1 space-y-2">
+          <p className="text-gray-600">
+            Location: {lat}, {lng}
+          </p>
+          {embedUrl && (
+            <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+              <iframe
+                title={`${label} map pin`}
+                src={embedUrl}
+                className="h-40 w-full border-0"
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            </div>
+          )}
+          {mapUrl && (
+            <a
+              href={mapUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-sm font-semibold text-violet-700 hover:underline"
+            >
+              View location pin on Google Maps
+            </a>
+          )}
+        </div>
+      ) : (
+        <p className="mt-1 text-gray-500">No GPS location recorded</p>
       )}
       {photoUrl && (
         <a href={photoUrl} target="_blank" rel="noreferrer" className="mt-3 block">
@@ -468,7 +523,7 @@ function LabourPanel() {
       <div className="rounded-lg border border-gray-200/80 bg-coal p-4 text-white shadow-sm">
         <div className="flex items-center gap-3">
           <Timer className="h-6 w-6 text-safety" />
-          <h3 className="text-base font-semibold">Labour Punch</h3>
+          <h3 className="text-base font-semibold">Employee Punch</h3>
         </div>
         <p className="mt-3 text-sm text-white/60">
           Photo and GPS location are required for punch in and punch out.
@@ -626,7 +681,7 @@ function LabourCheckboxList({
   labours,
   selected,
   onChange,
-  resourceLabel = "labour workers",
+  resourceLabel = "employees",
   getBadge,
 }: {
   labours: UserMini[];
@@ -640,7 +695,7 @@ function LabourCheckboxList({
       <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/50 p-4 text-sm text-gray-600">
         <p className="font-medium text-gray-900">No {resourceLabel} found.</p>
         <p className="mt-1 text-xs text-gray-500">
-          Create them in <strong>People</strong> or <strong>Labour</strong>, then assign here.
+          Create them under <strong>Employee</strong>, then assign here.
         </p>
       </div>
     );
@@ -695,7 +750,7 @@ function ProjectDetail({
   });
   const machineryUsage = useQuery<Paginated<MachineryUsage>>({
     queryKey: ["machinery-usage", projectId],
-    queryFn: () => api.machineryUsage(projectId),
+    queryFn: () => api.machineryUsage({ projectId }),
     retry: false,
   });
   const materials = useQuery<Paginated<Material>>({
@@ -706,7 +761,7 @@ function ProjectDetail({
   });
   const projectAttendance = useQuery<Paginated<AttendanceRecord>>({
     queryKey: ["attendance", projectId],
-    queryFn: () => api.attendance(projectId),
+    queryFn: () => api.attendance({ projectId }),
     enabled: canManage,
     refetchInterval: 30_000,
   });
@@ -997,7 +1052,7 @@ function ProjectDetail({
                     members={allSupervisorOptions}
                     selected={projectSupervisorIds}
                     onChange={setProjectSupervisorIds}
-                    emptyMessage="No supervisors found. Add them in People."
+                    emptyMessage="No supervisors found. Add them under Employee."
                   />
                 ) : (
                   <MemberList
@@ -1015,7 +1070,7 @@ function ProjectDetail({
           )}
 
           <div>
-            <SubsectionTitle>Labour</SubsectionTitle>
+            <SubsectionTitle>Employees</SubsectionTitle>
             <p className="mt-1 text-xs text-gray-500">Selected workers can be assigned to tasks below.</p>
             <div className="mt-2">
               {canManage ? (
@@ -1024,13 +1079,13 @@ function ProjectDetail({
                   selected={projectLabourIds}
                   onChange={setProjectLabourIds}
                   getBadge={labourSiteBadge}
-                  emptyMessage="No workers found. Add them in Labour or People."
+                  emptyMessage="No workers found. Add them under Employee."
                 />
               ) : (
                 <MemberList
                   members={projectLabours}
                   getBadge={labourSiteBadge}
-                  emptyMessage="No labour assigned to this project."
+                  emptyMessage="No employees assigned to this project."
                 />
               )}
             </div>
@@ -1038,7 +1093,7 @@ function ProjectDetail({
         </div>
       </ContentCard>
 
-      <ContentCard title="Tasks" subtitle="Work items and labour assignments for this project">
+      <ContentCard title="Tasks" subtitle="Work items and employee assignments for this project">
         {canManage && (
           <form onSubmit={submitTask} className="mb-5 rounded-lg border border-gray-100 bg-gray-50/80 p-4">
             <SubsectionTitle>Add task</SubsectionTitle>
@@ -1135,7 +1190,7 @@ function ProjectDetail({
                       </Field>
                     </div>
                     <div className="md:col-span-2">
-                      <Field label="Assign labours">
+                      <Field label="Assign employees">
                         <LabourCheckboxList
                           labours={taskLabourPool}
                           selected={editTaskLabours}
@@ -1515,7 +1570,7 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
           )}
           {(user?.role === "SUPER_ADMIN" || user?.role === "SUPERVISOR") && (
             <div className="md:col-span-2">
-              <Field label="Assign labours">
+              <Field label="Assign employees">
                 <LabourCheckboxList labours={labourList} selected={labours} onChange={setLabours} />
               </Field>
             </div>
@@ -1658,7 +1713,7 @@ function PeopleManager({ user }: { user: AuthUser | null }) {
         <div className="flex items-center gap-3">
           <UserPlus className="h-6 w-6 text-safety" />
           <h2 className="text-base font-semibold text-coal">
-            {isSuperAdmin ? "Create Supervisor" : "Create Labour"}
+            {isSuperAdmin ? "Create Supervisor" : "Create Employee"}
           </h2>
         </div>
         <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -1717,7 +1772,7 @@ function PeopleManager({ user }: { user: AuthUser | null }) {
       <div className="overflow-hidden rounded-lg border border-gray-200/80 bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
           <div>
-            <h2 className="text-base font-semibold text-coal">{isSuperAdmin ? "Supervisors" : "Labour Workers"}</h2>
+            <h2 className="text-base font-semibold text-coal">{isSuperAdmin ? "Supervisors" : "Employees"}</h2>
             <p className="text-xs text-gray-500">{listRows.length} {isSuperAdmin ? "supervisor" : "worker"}{listRows.length === 1 ? "" : "s"}</p>
           </div>
           {isSuperAdmin && selected.length > 0 && (
@@ -1795,7 +1850,7 @@ function PeopleManager({ user }: { user: AuthUser | null }) {
             {!listRows.length && (
               <tr>
                 <td colSpan={isSuperAdmin ? 5 : 4} className="px-4 py-10 text-center text-sm text-gray-500">
-                  {isSuperAdmin ? "No supervisors yet." : "No labour workers yet."}
+                  {isSuperAdmin ? "No supervisors yet." : "No employees yet."}
                 </td>
               </tr>
             )}
@@ -1995,16 +2050,35 @@ function AttendanceDetailPage({ recordId }: { recordId: number }) {
 
 function AttendanceHistoryPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const hydrated = useAppSelector((state) => state.auth.hydrated);
   const accessToken = useAppSelector((state) => state.auth.accessToken);
+  const idsParam = searchParams.get("ids") || undefined;
+  const labourIdsParam = searchParams.get("labour_ids") || undefined;
+  const approvedByParam = searchParams.get("approved_by");
+  const approvedBy = approvedByParam && /^\d+$/.test(approvedByParam) ? Number(approvedByParam) : undefined;
+  const markedAtParam = searchParams.get("marked_at") || undefined;
+  const projectParam = searchParams.get("project");
+  const projectFilter = projectParam && /^\d+$/.test(projectParam) ? Number(projectParam) : undefined;
+
   const attendance = useQuery<Paginated<AttendanceRecord>>({
-    queryKey: ["attendance"],
-    queryFn: () => api.attendance(),
+    queryKey: ["attendance", idsParam, labourIdsParam, approvedBy, markedAtParam, projectFilter],
+    queryFn: () =>
+      api.attendance({
+        ids: idsParam,
+        labour_ids: labourIdsParam,
+        approved_by: approvedBy,
+        marked_at: markedAtParam,
+        project: projectFilter,
+      }),
     enabled: hydrated && Boolean(accessToken),
   });
 
   const rows = attendance.data?.results ?? [];
-  const rowsPage = useTablePage(rows);
+  const rowsPage = useTablePage(rows, {
+    resetKey: `${idsParam ?? ""}-${labourIdsParam ?? ""}-${approvedBy ?? ""}-${markedAtParam ?? ""}-${projectFilter ?? ""}`,
+  });
+  const filtered = Boolean(idsParam || labourIdsParam || approvedBy || markedAtParam);
 
   if (attendance.isLoading) {
     return <p className="rounded-lg border border-gray-200/80 bg-white p-4 text-sm text-gray-500 shadow-sm">Loading attendance records...</p>;
@@ -2021,16 +2095,26 @@ function AttendanceHistoryPage() {
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link href="/attendance" className={`${btnSecondaryClass} text-xs`}>
-          <ArrowLeft className="h-4 w-4" />
-          Back to attendance
-        </Link>
-        <p className="text-sm text-gray-600">{rows.length} records</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/attendance" className={`${btnSecondaryClass} text-xs`}>
+            <ArrowLeft className="h-4 w-4" />
+            Back to attendance
+          </Link>
+          {filtered && (
+            <Link href="/attendance/history" className={`${btnSecondaryClass} text-xs`}>
+              Clear filter
+            </Link>
+          )}
+        </div>
+        <p className="text-sm text-gray-600">
+          {rows.length} record{rows.length === 1 ? "" : "s"}
+          {filtered ? " (filtered)" : ""}
+        </p>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="border-b border-gray-100 px-4 py-3">
-          <h2 className="text-base font-semibold text-coal">All Attendance Records</h2>
+          <h2 className="text-base font-semibold text-coal">{filtered ? "Filtered Attendance Records" : "All Attendance Records"}</h2>
           <p className="text-xs text-gray-500">Click a row to view photos, location, and details</p>
         </div>
         <DataTable>
@@ -2038,41 +2122,47 @@ function AttendanceHistoryPage() {
             <tr>
               <th className="px-4 py-2.5">Worker</th>
               <th className="px-4 py-2.5">Date</th>
-              <th className="px-4 py-2.5">Punch In</th>
-              <th className="px-4 py-2.5">Punch Out</th>
-              <th className="px-4 py-2.5">Hours</th>
-              <th className="px-4 py-2.5">Extra Hrs</th>
+              <th className="px-4 py-2.5">Workday</th>
               <th className="px-4 py-2.5">Project</th>
-              <th className="px-4 py-2.5">Status</th>
-              <th className="px-4 py-2.5">Approval</th>
+              <th className="px-4 py-2.5">Attendance by</th>
+              <th className="px-4 py-2.5">Location</th>
             </tr>
           </DataTableHead>
           <DataTableBody>
-            {rowsPage.pageRows.map((record, i) => (
-              <DataTableRow
-                key={record.id}
-                zebra={i % 2 === 1}
-                onClick={() => router.push(`/attendance/${record.id}`)}
-              >
-                <DataTableCell className="font-medium text-gray-900">{record.labour_name || "Worker"}</DataTableCell>
-                <DataTableCell>{formatDate(record.punch_in_at)}</DataTableCell>
-                <DataTableCell>
-                  {record.punch_in_at ? new Date(record.punch_in_at).toLocaleTimeString("en-IN", { timeStyle: "short" }) : "—"}
-                </DataTableCell>
-                <DataTableCell>
-                  {record.punch_out_at ? new Date(record.punch_out_at).toLocaleTimeString("en-IN", { timeStyle: "short" }) : "—"}
-                </DataTableCell>
-                <DataTableCell>{record.working_hours}h</DataTableCell>
-                <DataTableCell>{record.extra_hours ? `${record.extra_hours}h` : "—"}</DataTableCell>
-                <DataTableCell>{record.project_name || "—"}</DataTableCell>
-                <DataTableCell>
-                  <Badge tone={attendanceStatusTone(record.status)}>{record.status.replace("_", " ")}</Badge>
-                </DataTableCell>
-                <DataTableCell>
-                  <Badge tone={attendanceApprovalTone(record.approval_status)}>{record.approval_status}</Badge>
-                </DataTableCell>
-              </DataTableRow>
-            ))}
+            {rowsPage.pageRows.map((record, i) => {
+              const workday = attendanceWorkdayBadge(record);
+              const mapUrl = mapsLink(record.punch_in_latitude, record.punch_in_longitude);
+              return (
+                <DataTableRow
+                  key={record.id}
+                  zebra={i % 2 === 1}
+                  onClick={() => router.push(`/attendance/${record.id}`)}
+                >
+                  <DataTableCell className="font-medium text-gray-900">{record.labour_name || "Worker"}</DataTableCell>
+                  <DataTableCell>{formatDate(record.punch_in_at)}</DataTableCell>
+                  <DataTableCell>
+                    <Badge tone={workday.tone}>{workday.label}</Badge>
+                  </DataTableCell>
+                  <DataTableCell>{record.project_name || "—"}</DataTableCell>
+                  <DataTableCell>{record.attendance_by || "—"}</DataTableCell>
+                  <DataTableCell>
+                    {mapUrl ? (
+                      <a
+                        href={mapUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-violet-700 hover:underline"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        View location pin
+                      </a>
+                    ) : (
+                      "—"
+                    )}
+                  </DataTableCell>
+                </DataTableRow>
+              );
+            })}
           </DataTableBody>
         </DataTable>
         <TablePagination
@@ -2091,30 +2181,271 @@ function AttendanceHistoryPage() {
 }
 
 function AttendanceManager() {
-  const router = useRouter();
+  const queryClient = useQueryClient();
   const hydrated = useAppSelector((state) => state.auth.hydrated);
   const accessToken = useAppSelector((state) => state.auth.accessToken);
-  const attendance = useQuery<Paginated<AttendanceRecord>>({
-    queryKey: ["attendance"],
-    queryFn: () => api.attendance(),
+  const user = useAppSelector((state) => state.auth.user);
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
+
+  const today = new Date();
+  const [calendarMonth, setCalendarMonth] = useState(today.getMonth());
+  const [calendarYear, setCalendarYear] = useState(today.getFullYear());
+  const [selectedDates, setSelectedDates] = useState<string[]>([today.toISOString().slice(0, 10)]);
+  const [selected, setSelected] = useState<number[]>([]);
+  const [workdayValue, setWorkdayValue] = useState(1);
+  const [message, setMessage] = useState("");
+  const [projectId, setProjectId] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingConflicts, setPendingConflicts] = useState<
+    Array<{ labour_id: number; date?: string; error: string; existing_workday?: number | null }>
+  >([]);
+  const [markerCoords, setMarkerCoords] = useState<{ latitude?: number; longitude?: number }>({});
+
+  const workers = useQuery({
+    queryKey: ["labour-workers", "attendance-bulk"],
+    queryFn: () => api.labourWorkers({ ordering: "user__first_name", page_size: 200 }),
     enabled: hydrated && Boolean(accessToken),
-    refetchInterval: 30_000,
   });
 
-  const rows = attendance.data?.results ?? [];
-  const rowsPage = useTablePage(rows);
+  const supervisors = useQuery({
+    queryKey: ["supervisors", "attendance-bulk"],
+    queryFn: api.supervisors,
+    enabled: hydrated && Boolean(accessToken) && isSuperAdmin,
+  });
 
-  if (attendance.isLoading) {
-    return <p className="rounded-lg border border-gray-200/80 bg-white p-4 text-gray-500 shadow-sm">Loading attendance...</p>;
+  const projects = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.projects,
+    enabled: hydrated && Boolean(accessToken),
+  });
+
+  const labourRows = useMemo(() => {
+    const workerRows = (workers.data?.results ?? []).map((worker) => ({
+      id: worker.user_id,
+      full_name: worker.full_name || worker.username,
+      mobile_number: worker.mobile_number,
+      designation: worker.designation === "DRIVER" ? "Driver" : "Labour",
+      assigned_projects: worker.assigned_projects ?? [],
+    }));
+    if (!isSuperAdmin) return workerRows;
+    const supervisorRows = (supervisors.data ?? []).map((supervisor) => ({
+      id: supervisor.id,
+      full_name: supervisor.full_name || supervisor.username,
+      mobile_number: supervisor.mobile_number,
+      designation: "Supervisor",
+      assigned_projects: supervisor.assigned_projects ?? [],
+    }));
+    return [...workerRows, ...supervisorRows].sort((a, b) => a.full_name.localeCompare(b.full_name));
+  }, [workers.data?.results, supervisors.data, isSuperAdmin]);
+
+  const allIds = useMemo(() => labourRows.map((row) => row.id), [labourRows]);
+  const selectedPeople = labourRows.filter((person) => selected.includes(person.id));
+  const needsProjectPick = selectedPeople.some((person) => (person.assigned_projects?.length ?? 0) > 1);
+  const projectList = projects.data?.results ?? [];
+  const workersPage = useTablePage(labourRows, { pageSize: 20 });
+
+  const workdayOptions = [
+    { value: 0, label: "A", hint: "Absent" },
+    { value: 0.5, label: "H", hint: "0.5 day" },
+    { value: 1, label: "P", hint: "1 day" },
+    { value: 1.5, label: "1.5", hint: "1.5 days" },
+    { value: 2, label: "2", hint: "2 days" },
+    { value: 2.5, label: "2.5", hint: "2.5 days" },
+    { value: 3, label: "3", hint: "3 days" },
+  ] as const;
+
+  function workdayLabel(value?: number | null) {
+    if (value == null) return "—";
+    if (value === 0) return "A";
+    if (value === 0.5) return "H";
+    if (value === 1) return "P";
+    return String(value);
   }
 
-  if (attendance.isError) {
-    return (
-      <p className="rounded-3xl bg-red-50 p-8 text-red-700 shadow-sm">
-        {attendance.error instanceof Error ? attendance.error.message : "Failed to load attendance."}
-      </p>
-    );
+  const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+  const startWeekday = new Date(calendarYear, calendarMonth, 1).getDay();
+  const monthLabel = new Date(calendarYear, calendarMonth, 1).toLocaleString("en-IN", {
+    month: "long",
+    year: "numeric",
+  });
+
+  function toDateKey(day: number) {
+    return `${calendarYear}-${String(calendarMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
   }
+
+  function toggleDate(day: number) {
+    const key = toDateKey(day);
+    setSelectedDates((prev) => (prev.includes(key) ? prev.filter((d) => d !== key) : [...prev, key].sort()));
+  }
+
+  function shiftMonth(delta: number) {
+    const next = new Date(calendarYear, calendarMonth + delta, 1);
+    setCalendarMonth(next.getMonth());
+    setCalendarYear(next.getFullYear());
+  }
+
+  function toggle(id: number) {
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function togglePage() {
+    const pageIds = workersPage.pageRows.map((row) => row.id);
+    const allSelected = pageIds.length > 0 && pageIds.every((id) => selected.includes(id));
+    setSelected((prev) => {
+      if (allSelected) return prev.filter((id) => !pageIds.includes(id));
+      return Array.from(new Set([...prev, ...pageIds]));
+    });
+  }
+
+  function buildPayload(
+    overwrite = false,
+    coords: { latitude?: number; longitude?: number } = markerCoords,
+  ) {
+    return {
+      labour_ids: selected,
+      dates: selectedDates,
+      project: projectId ? Number(projectId) : undefined,
+      punch_in_time: workdayValue === 0 ? undefined : "09:00",
+      punch_out_time: workdayValue === 0 ? undefined : "18:00",
+      workday_value: workdayValue,
+      overwrite,
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+    };
+  }
+
+  function readMarkerLocation(): Promise<{ latitude?: number; longitude?: number }> {
+    return new Promise((resolve) => {
+      if (typeof navigator === "undefined" || !navigator.geolocation) {
+        resolve({});
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) =>
+          resolve({
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+          }),
+        () => resolve({}),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 60_000 },
+      );
+    });
+  }
+
+  function summarizeResult(result: Awaited<ReturnType<typeof api.bulkAttendance>>, overwritePass: boolean) {
+    const parts: string[] = [];
+    if (result.created_count > 0) parts.push(`Marked ${result.created_count}`);
+    if ((result.updated_count ?? 0) > 0) parts.push(`Updated ${result.updated_count}`);
+    const hardSkips = (result.skipped ?? []).filter((item) => !item.conflict);
+    if (hardSkips.length) {
+      parts.push(
+        `Skipped ${hardSkips.length}: ${hardSkips
+          .map((item) => {
+            const person = labourRows.find((row) => row.id === item.labour_id);
+            return `${person?.full_name || `#${item.labour_id}`}${item.date ? ` (${item.date})` : ""}: ${item.error}`;
+          })
+          .join("; ")}`,
+      );
+    }
+    if (!parts.length && !overwritePass) return "";
+    if (!parts.length) return "No changes made.";
+    return parts.join(". ") + ".";
+  }
+
+  const bulk = useMutation({
+    mutationFn: ({ overwrite, coords }: { overwrite: boolean; coords?: { latitude?: number; longitude?: number } }) =>
+      api.bulkAttendance(buildPayload(overwrite, coords ?? markerCoords)),
+    onSuccess: async (result, variables) => {
+      const conflicts = (result.conflicts?.length ? result.conflicts : result.skipped?.filter((s) => s.conflict)) ?? [];
+      if (!variables.overwrite && conflicts.length) {
+        setPendingConflicts(conflicts);
+        setConfirmOpen(true);
+        const summary = summarizeResult(result, false);
+        setMessage(
+          summary
+            ? `${summary} ${conflicts.length} existing mark${conflicts.length === 1 ? "" : "s"} need confirmation.`
+            : `${conflicts.length} existing attendance mark${conflicts.length === 1 ? "" : "s"} found. Confirm to overwrite.`,
+        );
+        queryClient.invalidateQueries({ queryKey: ["attendance"] });
+        queryClient.invalidateQueries({ queryKey: ["monthly-attendance"] });
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+        return;
+      }
+      setConfirmOpen(false);
+      setPendingConflicts([]);
+      setMessage(summarizeResult(result, true) || "Attendance saved.");
+      setSelected([]);
+      queryClient.invalidateQueries({ queryKey: ["attendance"] });
+      queryClient.invalidateQueries({ queryKey: ["monthly-attendance"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Bulk attendance failed."),
+  });
+
+  const overwriteBulk = useMutation({
+    mutationFn: async () => {
+      const byDate = new Map<string, number[]>();
+      for (const item of pendingConflicts) {
+        if (!item.date) continue;
+        const list = byDate.get(item.date) ?? [];
+        list.push(item.labour_id);
+        byDate.set(item.date, list);
+      }
+      let created = 0;
+      let updated = 0;
+      const skipped: Array<{ labour_id: number; date?: string; error: string }> = [];
+      for (const [date, labour_ids] of byDate.entries()) {
+        const result = await api.bulkAttendance({
+          labour_ids: Array.from(new Set(labour_ids)),
+          dates: [date],
+          project: projectId ? Number(projectId) : undefined,
+          punch_in_time: workdayValue === 0 ? undefined : "09:00",
+          punch_out_time: workdayValue === 0 ? undefined : "18:00",
+          workday_value: workdayValue,
+          overwrite: true,
+          latitude: markerCoords.latitude,
+          longitude: markerCoords.longitude,
+        });
+        created += result.created_count;
+        updated += result.updated_count ?? 0;
+        skipped.push(...(result.skipped ?? []).filter((item) => !item.conflict));
+      }
+      return { created_count: created, updated_count: updated, skipped_count: skipped.length, created_ids: [], skipped };
+    },
+    onSuccess: (result) => {
+      setConfirmOpen(false);
+      setPendingConflicts([]);
+      setMessage(summarizeResult(result, true));
+      setSelected([]);
+      queryClient.invalidateQueries({ queryKey: ["attendance"] });
+      queryClient.invalidateQueries({ queryKey: ["monthly-attendance"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Overwrite failed."),
+  });
+
+  async function markAttendance() {
+    setMessage("");
+    if (!selected.length) {
+      setMessage("Select at least one employee.");
+      return;
+    }
+    if (!selectedDates.length) {
+      setMessage("Select at least one date on the calendar.");
+      return;
+    }
+    if (needsProjectPick && !projectId) {
+      setMessage("Select a project because at least one selected employee is on multiple projects.");
+      return;
+    }
+    const coords = await readMarkerLocation();
+    setMarkerCoords(coords);
+    bulk.mutate({ overwrite: false, coords });
+  }
+
+  const pageIds = workersPage.pageRows.map((row) => row.id);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.includes(id));
+  const saving = bulk.isPending || overwriteBulk.isPending;
 
   return (
     <section className="space-y-4">
@@ -2123,505 +2454,254 @@ function AttendanceManager() {
           <div className="flex items-center gap-3">
             <Timer className="h-6 w-6 text-safety" />
             <div>
-              <h2 className="text-base font-semibold text-coal">Labour Attendance</h2>
-              <p className="text-sm text-gray-500">Mark bulk attendance and review punch records.</p>
+              <h2 className="text-base font-semibold text-coal">Employee Attendance</h2>
+              <p className="text-sm text-gray-500">Select dates and employees, choose a workday mark, then save.</p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Link href="/attendance/bulk" className={btnPrimaryClass}>
-              <Users className="h-4 w-4" />
-              Bulk Attendance
-            </Link>
-            <Link href="/attendance/history" className={btnSecondaryClass}>
-              <History className="h-4 w-4" />
-              View All Records
-            </Link>
+          <Link href="/attendance/history" className={btnSecondaryClass}>
+            <History className="h-4 w-4" />
+            View All Records
+          </Link>
+        </div>
+      </div>
+
+      {message && <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{message}</p>}
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-coal">Select dates</h3>
+              <p className="text-xs text-gray-500">Click days to select multiple dates.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" className={btnSecondaryClass} onClick={() => shiftMonth(-1)}>
+                Prev
+              </button>
+              <p className="min-w-[9rem] text-center text-sm font-semibold text-coal">{monthLabel}</p>
+              <button type="button" className={btnSecondaryClass} onClick={() => shiftMonth(1)}>
+                Next
+              </button>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase tracking-wide text-gray-500">
+            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+              <div key={day} className="py-1">
+                {day}
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {Array.from({ length: startWeekday }).map((_, index) => (
+              <div key={`pad-${index}`} />
+            ))}
+            {Array.from({ length: daysInMonth }).map((_, index) => {
+              const day = index + 1;
+              const key = toDateKey(day);
+              const active = selectedDates.includes(key);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => toggleDate(day)}
+                  className={`flex h-9 items-center justify-center rounded-md text-sm font-semibold transition ${
+                    active ? "bg-violet-600 text-white" : "bg-gray-50 text-coal hover:bg-violet-50"
+                  }`}
+                >
+                  {day}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-600">
+            <span className="font-medium">{selectedDates.length} date{selectedDates.length === 1 ? "" : "s"} selected</span>
+            {selectedDates.length > 0 && (
+              <button type="button" className="font-medium text-violet-700 hover:underline" onClick={() => setSelectedDates([])}>
+                Clear dates
+              </button>
+            )}
           </div>
         </div>
-        <div className="mt-6 rounded-md bg-gray-50 p-4">
-          <p className="text-xs font-bold uppercase text-gray-600">Total records</p>
-          <p className="mt-1 text-3xl font-semibold text-coal">{rows.length}</p>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <h3 className="text-sm font-semibold text-coal">Workday</h3>
+          <p className="text-xs text-gray-500">A = Absent · H = 0.5 · P = 1 day · up to 3 days</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {workdayOptions.map((option) => {
+              const active = workdayValue === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  title={option.hint}
+                  onClick={() => setWorkdayValue(option.value)}
+                  className={`inline-flex min-w-12 flex-col items-center rounded-lg border px-3 py-2 text-sm font-bold transition ${
+                    active
+                      ? option.value === 0
+                        ? "border-red-500 bg-red-500 text-white"
+                        : option.value === 0.5
+                          ? "border-amber-500 bg-amber-500 text-white"
+                          : "border-violet-600 bg-violet-600 text-white"
+                      : "border-gray-200 bg-gray-50 text-coal hover:border-violet-300"
+                  }`}
+                >
+                  <span>{option.label}</span>
+                  <span className={`text-[10px] font-medium ${active ? "text-white/90" : "text-gray-500"}`}>{option.hint}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {needsProjectPick && (
+            <div className="mt-4 max-w-md">
+              <label className="mb-1 block text-xs font-bold uppercase text-gray-500">Project</label>
+              <select className={inputClass} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                <option value="">Select project</option>
+                {projectList.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.code} - {project.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <button type="button" className={btnPrimaryClass} disabled={saving} onClick={markAttendance}>
+              {saving ? "Saving..." : "Mark Attendance"}
+            </button>
+            <button
+              type="button"
+              className={btnSecondaryClass}
+              onClick={() => setSelected(selected.length === allIds.length ? [] : allIds)}
+            >
+              {selected.length === allIds.length ? "Deselect All" : "Select All"}
+            </button>
+            <span className="text-xs text-gray-500">{selected.length} employee{selected.length === 1 ? "" : "s"} selected</span>
+          </div>
         </div>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="border-b border-gray-100 px-4 py-3">
-          <h3 className="text-sm font-semibold text-coal">Recent attendance</h3>
-          <p className="text-xs text-gray-500">Latest punch records · click a row for details</p>
+          <h3 className="text-sm font-semibold text-coal">Employees</h3>
+          <p className="text-xs text-gray-500">
+            {isSuperAdmin
+              ? "Select labour, drivers, or supervisors to mark for the chosen dates"
+              : "Select one or more employees to mark for the chosen dates"}
+          </p>
         </div>
         <DataTable>
           <DataTableHead>
             <tr>
-              <th className="px-4 py-2.5">Worker</th>
-              <th className="px-4 py-2.5">Date</th>
-              <th className="px-4 py-2.5">Mark</th>
-              <th className="px-4 py-2.5">Hours</th>
-              <th className="px-4 py-2.5">Project</th>
-              <th className="px-4 py-2.5">Status</th>
-              <th className="px-4 py-2.5">Approval</th>
+              <th className="px-4 py-2.5">
+                <input
+                  type="checkbox"
+                  aria-label="Select all on page"
+                  checked={allPageSelected}
+                  onChange={togglePage}
+                  disabled={!pageIds.length}
+                />
+              </th>
+              <th className="px-4 py-2.5">Name</th>
+              <th className="px-4 py-2.5">Mobile</th>
+              <th className="px-4 py-2.5">Designation</th>
+              <th className="px-4 py-2.5">Projects</th>
             </tr>
           </DataTableHead>
           <DataTableBody>
-            {rowsPage.pageRows.map((record, i) => (
-              <DataTableRow key={record.id} zebra={i % 2 === 1} onClick={() => router.push(`/attendance/${record.id}`)}>
-                <DataTableCell className="font-medium text-gray-900">{record.labour_name || "Worker"}</DataTableCell>
-                <DataTableCell>{formatDate(record.punch_in_at)}</DataTableCell>
+            {workersPage.pageRows.map((worker, i) => (
+              <DataTableRow key={worker.id} zebra={i % 2 === 1}>
                 <DataTableCell>
-                  <Badge
-                    tone={
-                      Number(record.workday_value ?? (record.attendance_mark === "ABSENT" ? 0 : record.attendance_mark === "HALF_DAY" ? 0.5 : 1)) === 0
-                        ? "red"
-                        : Number(record.workday_value) === 0.5 || record.attendance_mark === "HALF_DAY"
-                          ? "amber"
-                          : "green"
-                    }
-                  >
-                    {record.workday_value != null
-                      ? Number(record.workday_value) === 0
-                        ? "Absent"
-                        : `${Number.isInteger(Number(record.workday_value)) ? Number(record.workday_value) : Number(record.workday_value).toFixed(1)}d`
-                      : record.attendance_mark || "PRESENT"}
-                  </Badge>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${worker.full_name}`}
+                    checked={selected.includes(worker.id)}
+                    onChange={() => toggle(worker.id)}
+                  />
                 </DataTableCell>
-                <DataTableCell>{record.working_hours}h</DataTableCell>
-                <DataTableCell>{record.project_name || "—"}</DataTableCell>
+                <DataTableCell className="font-medium text-gray-900">{worker.full_name}</DataTableCell>
+                <DataTableCell>{worker.mobile_number || "—"}</DataTableCell>
+                <DataTableCell>{worker.designation}</DataTableCell>
                 <DataTableCell>
-                  <Badge tone={attendanceStatusTone(record.status)}>{record.status.replace("_", " ")}</Badge>
-                </DataTableCell>
-                <DataTableCell>
-                  <Badge tone={attendanceApprovalTone(record.approval_status)}>{record.approval_status}</Badge>
+                  {worker.assigned_projects.length
+                    ? worker.assigned_projects.map((project) => project.code).join(", ")
+                    : <span className="text-amber-700">None</span>}
                 </DataTableCell>
               </DataTableRow>
             ))}
-            {!rows.length && (
+            {!labourRows.length && !workers.isLoading && !(isSuperAdmin && supervisors.isLoading) && (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-500">
-                  No attendance records yet. Use Bulk Attendance to mark workers.
+                <td colSpan={5} className="px-4 py-10 text-center text-sm text-gray-500">
+                  No employees found.
                 </td>
               </tr>
             )}
           </DataTableBody>
         </DataTable>
         <TablePagination
-          page={rowsPage.page}
-          totalPages={rowsPage.totalPages}
-          total={rowsPage.total}
-          pageSize={rowsPage.pageSize}
-          from={rowsPage.from}
-          to={rowsPage.to}
-          onPageChange={rowsPage.setPage}
+          page={workersPage.page}
+          totalPages={workersPage.totalPages}
+          total={workersPage.total}
+          pageSize={workersPage.pageSize}
+          from={workersPage.from}
+          to={workersPage.to}
+          onPageChange={workersPage.setPage}
         />
       </div>
-    </section>
-  );
-}
 
-function PayrollManager() {
-  const queryClient = useQueryClient();
-  const user = useAppSelector((state) => state.auth.user);
-  const isSuperAdmin = user?.role === "SUPER_ADMIN";
-  const isSupervisor = user?.role === "SUPERVISOR";
-  const [message, setMessage] = useState("");
-  const [exporting, setExporting] = useState(false);
-  const now = new Date();
-  const [filterMonth, setFilterMonth] = useState(now.getMonth() + 1);
-  const [filterYear, setFilterYear] = useState(now.getFullYear());
-  const users = useQuery<Paginated<AuthUser>>({
-    queryKey: ["users"],
-    queryFn: api.users,
-    retry: false,
-    enabled: isSuperAdmin,
-  });
-  const salaries = useQuery<Paginated<Salary>>({
-    queryKey: ["salaries", filterMonth, filterYear],
-    queryFn: () => api.salaries({ month: filterMonth, year: filterYear }),
-  });
-  const labourList = (users.data?.results ?? []).filter((item) => item.role === "LABOUR");
-
-  const salaryProfile = useMutation({
-    mutationFn: (payload: Parameters<typeof api.createSalaryProfile>[0]) => api.createSalaryProfile(payload),
-    onSuccess: () => setMessage("Salary profile saved."),
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Salary profile failed."),
-  });
-  const advance = useMutation({
-    mutationFn: (payload: Parameters<typeof api.createAdvance>[0]) => api.createAdvance(payload),
-    onSuccess: () => setMessage("Advance payment recorded."),
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Advance creation failed."),
-  });
-  const generate = useMutation({
-    mutationFn: (payload: Parameters<typeof api.generateSalary>[0]) => api.generateSalary(payload),
-    onSuccess: () => {
-      setMessage("Salary generated.");
-      queryClient.invalidateQueries({ queryKey: ["salaries"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-    },
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Salary generation failed."),
-  });
-  const generateAll = useMutation({
-    mutationFn: api.generateAllSalaries,
-    onSuccess: (result) => {
-      if (result.skipped_count > 0) {
-        const reasons = result.skipped.map((item) => `${item.labour_name}: ${item.error}`).join("; ");
-        setMessage(`Generated ${result.created_count} salaries. Skipped ${result.skipped_count}: ${reasons}`);
-      } else {
-        setMessage(`Generated salary for ${result.created_count} workers.`);
-      }
-      queryClient.invalidateQueries({ queryKey: ["salaries"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-    },
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Bulk salary generation failed."),
-  });
-  const markPaid = useMutation({
-    mutationFn: api.markSalaryPaid,
-    onSuccess: () => {
-      setMessage("Salary marked as paid.");
-      queryClient.invalidateQueries({ queryKey: ["salaries"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-    },
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Could not mark salary as paid."),
-  });
-
-  function formValue(form: FormData, key: string) {
-    return String(form.get(key) ?? "");
-  }
-
-  const salaryRows = salaries.data?.results ?? [];
-  const salariesPage = useTablePage(salaryRows, { resetKey: `${filterMonth}-${filterYear}` });
-  const pendingCount = salaryRows.filter((salary) => salary.payment_status === "PENDING").length;
-  const paidCount = salaryRows.filter((salary) => salary.payment_status === "PAID").length;
-  const filterPeriodLabel = new Date(filterYear, filterMonth - 1, 1).toLocaleString("en-IN", {
-    month: "long",
-    year: "numeric",
-  });
-  const isFuturePeriod =
-    filterYear > now.getFullYear() ||
-    (filterYear === now.getFullYear() && filterMonth > now.getMonth() + 1);
-  const yearOptions = Array.from({ length: 6 }, (_, index) => now.getFullYear() - 2 + index);
-
-  async function downloadPayrollXlsx() {
-    setExporting(true);
-    try {
-      await api.exportSalaries({ month: filterMonth, year: filterYear });
-      setMessage(`Downloaded payroll for ${filterPeriodLabel}.`);
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Could not download payroll file.");
-    } finally {
-      setExporting(false);
-    }
-  }
-
-  return (
-    <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-      {isSuperAdmin && (
-        <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm xl:col-span-2">
-          <h2 className="text-base font-semibold text-coal">Payroll Actions</h2>
-          <p className="mt-1 text-sm text-gray-500">Generate monthly salary sheets for workers. Supervisors can then mark them as paid.</p>
-          {message && <p className="mt-4 rounded-lg bg-violet-50 px-4 py-3 text-sm font-medium text-violet-900">{message}</p>}
-
-          <form
-            className="mt-6 grid gap-4 rounded-lg border border-violet-100 bg-violet-50/40 p-4 md:grid-cols-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const form = new FormData(event.currentTarget);
-              generateAll.mutate({
-                month: Number(form.get("month")),
-                year: Number(form.get("year")),
-                deductions: formValue(form, "deductions") || "0",
-                till_date: formValue(form, "till_date") || undefined,
-              });
-            }}
-          >
-            <div className="md:col-span-2">
-              <h3 className="font-semibold text-coal">Generate salary for all labours</h3>
-              <p className="mt-1 text-xs text-gray-500">
-                Creates the next unpaid period for every worker up to the till date. If salary was already generated through an earlier date in the month (e.g. 1–9), the new sheet starts from the next day.
-              </p>
-            </div>
-            <Field label="Month">
-              <input className={inputClass} name="month" min="1" max="12" type="number" defaultValue={now.getMonth() + 1} required />
-            </Field>
-            <Field label="Year">
-              <input className={inputClass} name="year" min="2024" type="number" defaultValue={now.getFullYear()} required />
-            </Field>
-            <Field label="Till date (optional)">
-              <input className={inputClass} name="till_date" type="date" defaultValue={now.toISOString().slice(0, 10)} />
-            </Field>
-            <Field label="Deductions (per worker)">
-              <input className={inputClass} name="deductions" min="0" step="0.01" type="number" defaultValue="0" />
-            </Field>
-            <button className={`${btnPrimaryClass} md:col-span-2`} disabled={generateAll.isPending}>
-              {generateAll.isPending ? "Generating..." : "Generate All Salaries"}
+      <Modal
+        open={confirmOpen}
+        title="Overwrite existing attendance?"
+        subtitle="Some selected employees already have attendance on the chosen dates."
+        onClose={() => {
+          setConfirmOpen(false);
+          setPendingConflicts([]);
+        }}
+        footer={
+          <>
+            <button
+              type="button"
+              className={btnSecondaryClass}
+              onClick={() => {
+                setConfirmOpen(false);
+                setPendingConflicts([]);
+              }}
+            >
+              No
             </button>
-          </form>
-
-          <div className="mt-6 grid gap-4 lg:grid-cols-2">
-            <form
-              className="grid gap-4 rounded-lg border border-gray-100 p-4 md:grid-cols-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const form = new FormData(event.currentTarget);
-                salaryProfile.mutate({
-                  labour: Number(form.get("labour")),
-                  monthly_salary: formValue(form, "monthly_salary"),
-                  daily_wage: formValue(form, "daily_wage"),
-                  overtime_rate: formValue(form, "overtime_rate"),
-                });
-              }}
+            <button
+              type="button"
+              className={btnPrimaryClass}
+              disabled={overwriteBulk.isPending}
+              onClick={() => overwriteBulk.mutate()}
             >
-              <div className="md:col-span-2">
-                <h3 className="font-semibold text-coal">Set salary profile</h3>
-              </div>
-              <Field label="Labour">
-                <select className={inputClass} name="labour" required>
-                  <option value="">Select labour</option>
-                  {labourList.map((item) => (
-                    <option key={item.id} value={item.id}>{item.full_name || item.username}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Monthly salary">
-                <input className={inputClass} name="monthly_salary" min="0" step="0.01" type="number" defaultValue="0" />
-              </Field>
-              <Field label="Daily wage">
-                <input className={inputClass} name="daily_wage" min="0" step="0.01" type="number" required />
-              </Field>
-              <Field label="Overtime rate">
-                <input className={inputClass} name="overtime_rate" min="0" step="0.01" type="number" defaultValue="0" />
-              </Field>
-              <button className={btnPrimaryClass}>Save profile</button>
-            </form>
-
-            <form
-              className="grid gap-4 rounded-lg border border-gray-100 p-4 md:grid-cols-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const form = new FormData(event.currentTarget);
-                advance.mutate({
-                  labour: Number(form.get("labour")),
-                  amount: formValue(form, "amount"),
-                  date: formValue(form, "date"),
-                  reason: formValue(form, "reason"),
-                });
-              }}
-            >
-              <div className="md:col-span-2">
-                <h3 className="font-semibold text-coal">Record advance</h3>
-              </div>
-              <Field label="Labour">
-                <select className={inputClass} name="labour" required>
-                  <option value="">Select labour</option>
-                  {labourList.map((item) => (
-                    <option key={item.id} value={item.id}>{item.full_name || item.username}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Amount">
-                <input className={inputClass} name="amount" min="0" step="0.01" type="number" required />
-              </Field>
-              <Field label="Date">
-                <input className={inputClass} name="date" type="date" required />
-              </Field>
-              <Field label="Reason">
-                <input className={inputClass} name="reason" />
-              </Field>
-              <button className={btnPrimaryClass}>Save advance</button>
-            </form>
-          </div>
-
-          <form
-            className="mt-4 grid gap-4 rounded-lg border border-gray-100 p-4 md:grid-cols-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const form = new FormData(event.currentTarget);
-              generate.mutate({
-                labour: Number(form.get("labour")),
-                month: Number(form.get("month")),
-                year: Number(form.get("year")),
-                deductions: formValue(form, "deductions") || "0",
-              });
-            }}
-          >
-            <div className="md:col-span-2">
-              <h3 className="font-semibold text-coal">Generate salary for one worker</h3>
-              <p className="mt-1 text-xs text-gray-500">
-                Continues from the day after that worker&apos;s last generated period in the selected month.
-              </p>
-            </div>
-            <Field label="Labour">
-              <select className={inputClass} name="labour" required>
-                <option value="">Select labour</option>
-                {labourList.map((item) => (
-                  <option key={item.id} value={item.id}>{item.full_name || item.username}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Month">
-              <input className={inputClass} name="month" min="1" max="12" type="number" required />
-            </Field>
-            <Field label="Year">
-              <input className={inputClass} name="year" min="2024" type="number" defaultValue={now.getFullYear()} required />
-            </Field>
-            <Field label="Deductions">
-              <input className={inputClass} name="deductions" min="0" step="0.01" type="number" defaultValue="0" />
-            </Field>
-            <button className={btnPrimaryClass}>Generate salary</button>
-          </form>
-        </div>
-      )}
-
-      {!isSuperAdmin && (
-        <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm xl:col-span-2">
-          <h2 className="text-base font-semibold text-coal">Payroll</h2>
-          <p className="mt-1 text-sm text-gray-500">
-            {isSupervisor
-              ? "Review salary sheets generated by admin and mark them as paid once disbursed."
-              : "View salary sheets for your team."}
+              {overwriteBulk.isPending ? "Updating..." : "Yes, change"}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-2 py-2">
+          <p className="text-sm text-gray-600">
+            Change existing marks to <span className="font-semibold text-coal">{workdayLabel(workdayValue)}</span>?
           </p>
-          {message && <p className="mt-4 rounded-lg bg-violet-50 px-4 py-3 text-sm font-medium text-violet-900">{message}</p>}
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg bg-amber-50 p-3">
-              <p className="text-xs font-medium uppercase text-amber-800">Pending payment</p>
-              <p className="mt-1 text-2xl font-semibold text-amber-900">{pendingCount}</p>
-            </div>
-            <div className="rounded-lg bg-emerald-50 p-3">
-              <p className="text-xs font-medium uppercase text-emerald-800">Paid</p>
-              <p className="mt-1 text-2xl font-semibold text-emerald-900">{paidCount}</p>
-            </div>
-          </div>
+          <ul className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-gray-100 bg-gray-50 p-3 text-sm">
+            {pendingConflicts.map((item) => {
+              const person = labourRows.find((row) => row.id === item.labour_id);
+              return (
+                <li key={`${item.labour_id}-${item.date}`}>
+                  <span className="font-medium text-coal">{person?.full_name || `#${item.labour_id}`}</span>
+                  {item.date ? <span className="text-gray-500"> · {item.date}</span> : null}
+                  <span className="text-gray-500">
+                    {" "}
+                    · current {workdayLabel(item.existing_workday)} → {workdayLabel(workdayValue)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
         </div>
-      )}
-
-      <div className="overflow-hidden rounded-lg border border-gray-200/80 bg-white shadow-sm xl:col-span-2">
-        <div className="border-b border-gray-100 px-4 py-3">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold text-coal">Salary Sheets</h2>
-              <p className="text-xs text-gray-500">
-                {filterPeriodLabel} · {salaryRows.length} record{salaryRows.length === 1 ? "" : "s"}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="block">
-                <span className="text-xs font-medium text-gray-600">Month</span>
-                <select
-                  className={`${inputClass} mt-1 min-w-[9rem]`}
-                  value={filterMonth}
-                  onChange={(event) => setFilterMonth(Number(event.target.value))}
-                >
-                  {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => (
-                    <option key={month} value={month}>
-                      {new Date(2000, month - 1, 1).toLocaleString("en-IN", { month: "long" })}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className="text-xs font-medium text-gray-600">Year</span>
-                <select
-                  className={`${inputClass} mt-1 min-w-[6rem]`}
-                  value={filterYear}
-                  onChange={(event) => setFilterYear(Number(event.target.value))}
-                >
-                  {yearOptions.map((year) => (
-                    <option key={year} value={year}>
-                      {year}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {isSuperAdmin && (
-                <button
-                  type="button"
-                  className={`${btnSecondaryClass} mt-5`}
-                  disabled={exporting || !salaryRows.length}
-                  onClick={() => void downloadPayrollXlsx()}
-                >
-                  <Download className="h-4 w-4" />
-                  {exporting ? "Preparing..." : "Download XLSX"}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-        {salaries.isLoading ? (
-          <p className="px-4 py-8 text-center text-sm text-gray-500">Loading salary sheets...</p>
-        ) : (
-        <DataTable>
-          <DataTableHead>
-            <tr>
-              <th className="px-4 py-2.5">Worker</th>
-              <th className="px-4 py-2.5">Period</th>
-              <th className="px-4 py-2.5">Days</th>
-              <th className="px-4 py-2.5">OT Hrs</th>
-              <th className="px-4 py-2.5">Gross</th>
-              <th className="px-4 py-2.5">Advances</th>
-              <th className="px-4 py-2.5">Deductions</th>
-              <th className="px-4 py-2.5">Net Pay</th>
-              <th className="px-4 py-2.5">Status</th>
-              <th className="px-4 py-2.5">Action</th>
-            </tr>
-          </DataTableHead>
-          <DataTableBody>
-            {salariesPage.pageRows.map((salary, index) => (
-              <DataTableRow key={salary.id} zebra={index % 2 === 1}>
-                <DataTableCell className="font-medium text-gray-900">{salary.labour_name}</DataTableCell>
-                <DataTableCell className="text-xs">
-                  {salary.period_start && salary.period_end
-                    ? `${new Date(salary.period_start).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} – ${new Date(salary.period_end).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`
-                    : `${salary.month}/${salary.year}`}
-                </DataTableCell>
-                <DataTableCell>{salary.working_days}</DataTableCell>
-                <DataTableCell>{salary.overtime_hours}</DataTableCell>
-                <DataTableCell>{formatCurrency(salary.gross_pay)}</DataTableCell>
-                <DataTableCell>{formatCurrency(salary.advances)}</DataTableCell>
-                <DataTableCell>{formatCurrency(salary.deductions)}</DataTableCell>
-                <DataTableCell className="font-medium text-gray-900">{formatCurrency(salary.net_pay)}</DataTableCell>
-                <DataTableCell>
-                  <Badge tone={salary.payment_status === "PAID" ? "green" : "amber"}>
-                    {salary.payment_status === "PAID" ? "Paid" : "Pending"}
-                  </Badge>
-                  {salary.payment_status === "PAID" && salary.paid_at && (
-                    <p className="mt-1 text-[10px] text-gray-500">
-                      {new Date(salary.paid_at).toLocaleDateString("en-IN")}
-                      {salary.paid_by_name ? ` · ${salary.paid_by_name}` : ""}
-                    </p>
-                  )}
-                </DataTableCell>
-                <DataTableCell>
-                  {salary.payment_status === "PENDING" && (isSupervisor || isSuperAdmin) ? (
-                    <button
-                      type="button"
-                      className={`${btnPrimaryClass} px-3 py-1.5 text-xs`}
-                      disabled={markPaid.isPending}
-                      onClick={() => markPaid.mutate(salary.id)}
-                    >
-                      Mark paid
-                    </button>
-                  ) : (
-                    <span className="text-xs text-gray-400">—</span>
-                  )}
-                </DataTableCell>
-              </DataTableRow>
-            ))}
-          </DataTableBody>
-        </DataTable>
-        )}
-        <TablePagination
-          page={salariesPage.page}
-          totalPages={salariesPage.totalPages}
-          total={salariesPage.total}
-          pageSize={salariesPage.pageSize}
-          from={salariesPage.from}
-          to={salariesPage.to}
-          onPageChange={salariesPage.setPage}
-        />
-        {!salaries.isLoading && !salaryRows.length && (
-          <p className="px-4 py-8 text-center text-sm text-amber-700">
-            Salary not generated yet for {filterPeriodLabel}.
-            {isFuturePeriod ? " This month is in the future." : ""}
-          </p>
-        )}
-      </div>
+      </Modal>
     </section>
   );
 }
@@ -2699,12 +2779,15 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
   const router = useRouter();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
-  const [machineryTab, setMachineryTab] = useState<"fuel" | "machines" | "usage" | "maintenance">("fuel");
+  const [machineryTab, setMachineryTab] = useState<"fuel" | "machines" | "usage" | "maintenance">("machines");
   const [fuelModalOpen, setFuelModalOpen] = useState(false);
   const [machineModalOpen, setMachineModalOpen] = useState(false);
   const [usageModalOpen, setUsageModalOpen] = useState(false);
+  const [fuelMachineryId, setFuelMachineryId] = useState("");
+  const [previousMeter, setPreviousMeter] = useState("");
   const [machineryComplianceFilter, setMachineryComplianceFilter] = useState<MachineryComplianceKey>("all");
   const [machineryExpiryFilter, setMachineryExpiryFilter] = useState<MachineryExpiryKey>("upcoming");
+  const [selectedMachinery, setSelectedMachinery] = useState<number[]>([]);
   const projects = useQuery<Paginated<Project>>({ queryKey: ["projects"], queryFn: api.projects });
   const vendors = useQuery<Paginated<Vendor>>({ queryKey: ["vendors"], queryFn: api.vendors, retry: false });
   const materials = useQuery<Paginated<Material>>({ queryKey: ["materials"], queryFn: api.materials, retry: false });
@@ -2715,7 +2798,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
   });
   const expenses = useQuery<Paginated<Expense>>({ queryKey: ["expenses"], queryFn: api.expenses, retry: false });
   const machinery = useQuery<Paginated<Machinery>>({ queryKey: ["machinery"], queryFn: api.machinery, retry: false });
-  const fuelLogs = useQuery<Paginated<FuelLog>>({ queryKey: ["fuel-logs"], queryFn: api.fuelLogs, retry: false });
+  const fuelLogs = useQuery<Paginated<FuelLog>>({ queryKey: ["fuel-logs"], queryFn: () => api.fuelLogs(), retry: false });
   const machineryUsageList = useQuery<Paginated<MachineryUsage>>({
     queryKey: ["machinery-usage"],
     queryFn: () => api.machineryUsage(),
@@ -2773,6 +2856,36 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
     },
     onError,
   });
+  const deleteMachinery = useMutation({
+    mutationFn: api.deleteMachinery,
+    onSuccess: () => {
+      onSuccess("Machine removed.", ["machinery", "fuel-logs", "machinery-usage"]);
+      setSelectedMachinery([]);
+    },
+    onError,
+  });
+  const bulkDeleteMachinery = useMutation({
+    mutationFn: api.bulkDeleteMachinery,
+    onSuccess: (result) => {
+      if (result.skipped_count > 0) {
+        const reasons = result.skipped.map((item) => `#${item.id}: ${item.error}`).join("; ");
+        onSuccess(
+          result.deleted_count > 0
+            ? `Removed ${result.deleted_count} machines. Skipped ${result.skipped_count}: ${reasons}`
+            : `Could not remove machines. Skipped ${result.skipped_count}: ${reasons}`,
+          ["machinery", "fuel-logs", "machinery-usage"],
+        );
+      } else {
+        onSuccess(`Removed ${result.deleted_count} machine${result.deleted_count === 1 ? "" : "s"}.`, [
+          "machinery",
+          "fuel-logs",
+          "machinery-usage",
+        ]);
+      }
+      setSelectedMachinery([]);
+    },
+    onError,
+  });
   const createUsage = useMutation({
     mutationFn: (payload: Parameters<typeof api.createMachineryUsage>[0]) => api.createMachineryUsage(payload),
     onSuccess: () => {
@@ -2786,12 +2899,14 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
     onSuccess: () => {
       onSuccess("Fuel log saved.", ["reports", "fuel-logs"]);
       setFuelModalOpen(false);
+      setFuelMachineryId("");
+      setPreviousMeter("");
     },
     onError,
   });
   const createMaintenance = useMutation({
     mutationFn: (payload: Parameters<typeof api.createMaintenance>[0]) => api.createMaintenance(payload),
-    onSuccess: () => onSuccess("Maintenance record saved.", ["reports"]),
+    onSuccess: () => onSuccess("Maintenance record saved.", ["reports", "maintenance"]),
     onError,
   });
 
@@ -2811,6 +2926,28 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
     resetKey: `${machineryComplianceFilter}-${machineryExpiryFilter}`,
   });
   const usagePage = useTablePage(usageList, { resetKey: "usage" });
+  const machineryPageIds = machineryPage.pageRows.map((item) => item.id);
+  const allMachineryPageSelected =
+    machineryPageIds.length > 0 && machineryPageIds.every((id) => selectedMachinery.includes(id));
+  const deletingMachinery = deleteMachinery.isPending || bulkDeleteMachinery.isPending;
+
+  function toggleMachinery(id: number) {
+    setSelectedMachinery((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function toggleAllMachineryPage() {
+    setSelectedMachinery((prev) => {
+      if (allMachineryPageSelected) return prev.filter((id) => !machineryPageIds.includes(id));
+      return Array.from(new Set([...prev, ...machineryPageIds]));
+    });
+  }
+
+  function confirmRemoveSelectedMachinery() {
+    if (!selectedMachinery.length) return;
+    const label = selectedMachinery.length === 1 ? "this machine" : `${selectedMachinery.length} machines`;
+    if (!window.confirm(`Delete ${label}? Related fuel logs, usage, and maintenance will also be removed.`)) return;
+    bulkDeleteMachinery.mutate(selectedMachinery);
+  }
 
   const projectSelect = (
     <select className={inputClass} name="project" required>
@@ -2844,14 +2981,28 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
   );
   const machinerySelect = (
     <select className={inputClass} name="machinery" required>
-      <option value="">Select machinery</option>
-      {machineryList.map((item) => (
+      <option value="">Select machine</option>
+      {machineryList.filter((item) => item.active).map((item) => (
         <option key={item.id} value={item.id}>
           {item.name} - {item.registration_number}
         </option>
       ))}
     </select>
   );
+
+  async function onFuelMachineryChange(machineryId: string) {
+    setFuelMachineryId(machineryId);
+    if (!machineryId) {
+      setPreviousMeter("");
+      return;
+    }
+    try {
+      const last = await api.lastFuelMeter(Number(machineryId));
+      setPreviousMeter(last.previous_meter_reading || "0");
+    } catch {
+      setPreviousMeter("0");
+    }
+  }
 
   return (
     <section className="space-y-4">
@@ -3088,8 +3239,8 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
               active={machineryTab}
               onChange={setMachineryTab}
               tabs={[
+                { id: "machines", label: "Machines", count: machineryList.length },
                 { id: "fuel", label: "Fuel Logs", count: fuelLogList.length },
-                { id: "machines", label: "Machinery", count: machineryList.length },
                 { id: "usage", label: "Usage", count: usageList.length },
                 { id: "maintenance", label: "Maintenance" },
               ]}
@@ -3205,13 +3356,37 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                       {filteredMachineryList.length} of {machineryList.length} machines
                     </p>
                   </div>
-                  <button type="button" className={btnPrimaryClass} onClick={() => setMachineModalOpen(true)}>
-                    + Add Machine
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {selectedMachinery.length > 0 && (
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-60"
+                        disabled={deletingMachinery}
+                        onClick={confirmRemoveSelectedMachinery}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        {bulkDeleteMachinery.isPending
+                          ? "Removing..."
+                          : `Remove selected (${selectedMachinery.length})`}
+                      </button>
+                    )}
+                    <button type="button" className={btnPrimaryClass} onClick={() => setMachineModalOpen(true)}>
+                      + Add Machine
+                    </button>
+                  </div>
                 </Toolbar>
                 <DataTable>
                   <DataTableHead>
                     <tr>
+                      <th className="px-4 py-2.5">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all on page"
+                          checked={allMachineryPageSelected}
+                          onChange={toggleAllMachineryPage}
+                          disabled={!machineryPageIds.length}
+                        />
+                      </th>
                       <th className="px-4 py-2.5">Name</th>
                       <th className="px-4 py-2.5">Vehicle</th>
                       <th className="px-4 py-2.5">Insurance</th>
@@ -3221,11 +3396,21 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                       <th className="px-4 py-2.5">Green tax</th>
                       <th className="px-4 py-2.5">HSRP</th>
                       <th className="px-4 py-2.5">Status</th>
+                      <th className="px-4 py-2.5">Actions</th>
                     </tr>
                   </DataTableHead>
                   <DataTableBody>
                     {machineryPage.pageRows.map((item, i) => (
                       <DataTableRow key={item.id} zebra={i % 2 === 1} onClick={() => router.push(`/machinery/${item.id}`)}>
+                        <DataTableCell>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${item.name}`}
+                            checked={selectedMachinery.includes(item.id)}
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={() => toggleMachinery(item.id)}
+                          />
+                        </DataTableCell>
                         <DataTableCell className="font-medium text-gray-900">
                           <p>{item.name}</p>
                           <p className="text-xs font-normal text-gray-500">{item.machine_type}</p>
@@ -3270,11 +3455,33 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                         <DataTableCell>
                           <Badge tone={item.active ? "green" : "gray"}>{item.active ? "Active" : "Inactive"}</Badge>
                         </DataTableCell>
+                        <DataTableCell>
+                          <button
+                            type="button"
+                            aria-label={`Delete ${item.name}`}
+                            title="Delete"
+                            className="inline-flex items-center justify-center rounded-md border border-red-200 bg-red-50 p-1.5 text-red-700 hover:bg-red-100 disabled:opacity-60"
+                            disabled={deletingMachinery}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (
+                                !window.confirm(
+                                  `Delete "${item.name}"? Related fuel logs, usage, and maintenance will also be removed.`,
+                                )
+                              ) {
+                                return;
+                              }
+                              deleteMachinery.mutate(item.id);
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </DataTableCell>
                       </DataTableRow>
                     ))}
                     {!filteredMachineryList.length && (
                       <tr>
-                        <td colSpan={9} className="px-4 py-10 text-center text-sm text-gray-500">
+                        <td colSpan={11} className="px-4 py-10 text-center text-sm text-gray-500">
                           {machineryList.length
                             ? "No machines match these expiry filters."
                             : "No machinery registered yet."}
@@ -3405,11 +3612,23 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
           <Modal
             open={fuelModalOpen}
             title="Add Fuel Log"
-            subtitle="Record fuel purchase with meter readings and bill photos"
-            onClose={() => setFuelModalOpen(false)}
+            subtitle="Previous meter fills from the last fuel entry for that machine"
+            onClose={() => {
+              setFuelModalOpen(false);
+              setFuelMachineryId("");
+              setPreviousMeter("");
+            }}
             footer={
               <>
-                <button type="button" className={btnSecondaryClass} onClick={() => setFuelModalOpen(false)}>
+                <button
+                  type="button"
+                  className={btnSecondaryClass}
+                  onClick={() => {
+                    setFuelModalOpen(false);
+                    setFuelMachineryId("");
+                    setPreviousMeter("");
+                  }}
+                >
                   Cancel
                 </button>
                 <button type="submit" form="fuel-log-form" className={btnPrimaryClass} disabled={createFuel.isPending}>
@@ -3440,9 +3659,33 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
               }}
             >
               <FormRow label="Project (optional)">{fuelProjectSelect}</FormRow>
-              <FormRow label="Machine">{machinerySelect}</FormRow>
+              <FormRow label="Machine">
+                <select
+                  className={inputClass}
+                  name="machinery"
+                  required
+                  value={fuelMachineryId}
+                  onChange={(event) => onFuelMachineryChange(event.target.value)}
+                >
+                  <option value="">Select machine</option>
+                  {machineryList.filter((item) => item.active).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} - {item.registration_number}
+                    </option>
+                  ))}
+                </select>
+              </FormRow>
               <FormRow label="Date"><input className={inputClass} name="logged_date" type="date" required /></FormRow>
-              <FormRow label="Previous meter"><input className={inputClass} name="previous_meter_reading" type="number" required /></FormRow>
+              <FormRow label="Previous meter">
+                <input
+                  className={inputClass}
+                  name="previous_meter_reading"
+                  type="number"
+                  required
+                  value={previousMeter}
+                  onChange={(event) => setPreviousMeter(event.target.value)}
+                />
+              </FormRow>
               <FormRow label="Current meter"><input className={inputClass} name="current_meter_reading" type="number" required /></FormRow>
               <FormRow label="Fuel quantity"><input className={inputClass} name="fuel_quantity" type="number" required /></FormRow>
               <FormRow label="Fuel cost"><input className={inputClass} name="fuel_cost" type="number" required /></FormRow>
@@ -3707,7 +3950,8 @@ export {
   AttendanceManager,
   AttendanceHistoryPage,
   AttendanceDetailPage,
-  PayrollManager,
   OperationsManager,
   LabourPanel,
 };
+
+export { PayrollManager, UpdateWagesPage, RecordAdvancePage } from "@/components/payroll-module";

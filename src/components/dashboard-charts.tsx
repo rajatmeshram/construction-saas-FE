@@ -1,8 +1,7 @@
 "use client";
 
+import Link from "next/link";
 import {
-  Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -15,9 +14,10 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { MapPin, Timer, Users } from "lucide-react";
 
 import { ContentCard } from "@/components/ui";
-import type { DashboardMetrics } from "@/lib/types";
+import type { AttendanceActivityItem, DashboardMetrics } from "@/lib/types";
 
 const STATUS_COLORS: Record<string, string> = {
   ACTIVE: "#7c3aed",
@@ -34,6 +34,27 @@ function formatStatus(status: string) {
   return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function mapsUrl(lat?: string | null, lng?: string | null, placeQuery?: string | null) {
+  if (lat != null && lng != null && lat !== "" && lng !== "") {
+    return `https://www.google.com/maps?q=${encodeURIComponent(`${lat},${lng}`)}&z=18`;
+  }
+  if (placeQuery && placeQuery.trim()) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(placeQuery.trim())}`;
+  }
+  return null;
+}
+
 function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; name: string }>; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
@@ -48,6 +69,60 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
   );
 }
 
+function ActivityCard({ item }: { item: AttendanceActivityItem }) {
+  const params = new URLSearchParams();
+  params.set("approved_by", String(item.marker_id));
+  // Use minute bucket so history can resolve the same activity group without listing every id.
+  const markedAt = new Date(item.marked_at);
+  markedAt.setSeconds(0, 0);
+  params.set("marked_at", markedAt.toISOString());
+  if (item.project_id != null) params.set("project", String(item.project_id));
+  const href = `/attendance/history?${params.toString()}`;
+  const mapHref = mapsUrl(item.latitude, item.longitude, item.project_location);
+  const countLabel = `${item.employee_count} employee${item.employee_count === 1 ? "" : "s"}`;
+
+  return (
+    <div className="rounded-lg border border-gray-100 bg-gray-50/80 p-3 transition hover:border-violet-200 hover:bg-violet-50/40">
+      <Link href={href} className="block">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 rounded-md bg-violet-100 p-2 text-violet-700">
+            <Users className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-coal">
+              <span className="text-violet-700">{item.marker_name}</span> marked {countLabel} attendance
+            </p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600">
+              <span className="inline-flex items-center gap-1">
+                <Timer className="h-3.5 w-3.5" />
+                {formatDateTime(item.marked_at)}
+              </span>
+              {(item.project_name || item.project_location) && (
+                <span className="inline-flex items-center gap-1">
+                  <MapPin className="h-3.5 w-3.5" />
+                  {item.project_name || item.project_location}
+                  {item.project_name && item.project_location ? ` · ${item.project_location}` : ""}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </Link>
+      {mapHref ? (
+        <a
+          href={mapHref}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-2 inline-flex items-center gap-1 pl-11 text-[11px] font-medium text-violet-700 hover:underline"
+        >
+          <MapPin className="h-3 w-3" />
+          View location pin on map
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 export function DashboardCharts({ data }: { data?: DashboardMetrics }) {
   const statusData = (data?.status_breakdown ?? [])
     .filter((item) => item.total > 0)
@@ -58,7 +133,7 @@ export function DashboardCharts({ data }: { data?: DashboardMetrics }) {
     }));
 
   const spendData = (data?.spend_breakdown ?? []).filter((item) => item.value > 0);
-  const trendData = data?.attendance_trend ?? [];
+  const activity = data?.attendance_activity ?? [];
 
   const budgetTotal = Number(data?.budget.total ?? 0);
   const budgetActual = Number(data?.budget.actual ?? 0);
@@ -69,29 +144,12 @@ export function DashboardCharts({ data }: { data?: DashboardMetrics }) {
 
   return (
     <section className="mt-4 grid gap-4 lg:grid-cols-2">
-      <ContentCard title="Attendance Trend" subtitle="Last 7 days — present workers & hours">
-        <div className="h-56">
-          {trendData.length ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={trendData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="presentFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.25} />
-                    <stop offset="95%" stopColor="#7c3aed" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
-                <YAxis yAxisId="left" tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: "#6b7280" }} axisLine={false} tickLine={false} />
-                <Tooltip content={<ChartTooltip />} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Area yAxisId="left" type="monotone" dataKey="present" name="Present" stroke="#7c3aed" fill="url(#presentFill)" strokeWidth={2} />
-                <Area yAxisId="right" type="monotone" dataKey="hours" name="Hours" stroke="#10b981" fill="transparent" strokeWidth={2} strokeDasharray="4 4" />
-              </AreaChart>
-            </ResponsiveContainer>
+      <ContentCard title="Attendance Activity" subtitle="Recent supervisor & admin attendance marks">
+        <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+          {activity.length ? (
+            activity.map((item) => <ActivityCard key={item.id} item={item} />)
           ) : (
-            <p className="flex h-full items-center justify-center text-sm text-gray-500">No attendance data yet.</p>
+            <p className="flex h-40 items-center justify-center text-sm text-gray-500">No attendance activity yet.</p>
           )}
         </div>
       </ContentCard>

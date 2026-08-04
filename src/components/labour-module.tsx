@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useMemo, useRef, useState } from "react";
 
 import { api } from "@/lib/api";
 import { useTablePage } from "@/lib/pagination";
@@ -174,26 +174,68 @@ function CompactCalendar({
 
 export function WorkersListPage() {
   const queryClient = useQueryClient();
+  const user = useAppSelector((state) => state.auth.user);
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
   const [nameSearch, setNameSearch] = useState("");
   const [mobileSearch, setMobileSearch] = useState("");
   const [message, setMessage] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
-  const [selected, setSelected] = useState<number[]>([]);
+  const [createError, setCreateError] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
+  const createFormRef = useRef<HTMLFormElement>(null);
 
   const workers = useQuery({
     queryKey: ["labour-workers", nameSearch, mobileSearch],
     queryFn: () => api.labourWorkers({ name: nameSearch || undefined, mobile: mobileSearch || undefined, ordering: "user__first_name" }),
   });
 
+  const supervisors = useQuery({
+    queryKey: ["supervisors", "workers-directory"],
+    queryFn: api.supervisors,
+    enabled: isSuperAdmin,
+  });
+
+  const wageProfiles = useQuery({
+    queryKey: ["salary-profiles", "workers-directory"],
+    queryFn: () => api.salaryProfiles(),
+  });
+
+  const wageByUserId = useMemo(() => {
+    const map = new Map<number, { monthly: string; daily: string }>();
+    for (const profile of wageProfiles.data?.results ?? []) {
+      map.set(profile.labour, {
+        monthly: profile.monthly_salary,
+        daily: profile.daily_wage,
+      });
+    }
+    return map;
+  }, [wageProfiles.data?.results]);
+
   const createWorker = useMutation({
     mutationFn: api.createLabourWorker,
     onSuccess: () => {
-      setMessage("Labour created.");
+      setMessage("Employee created.");
+      setCreateError("");
       setCreateOpen(false);
+      createFormRef.current?.reset();
       queryClient.invalidateQueries({ queryKey: ["labour-workers"] });
+      queryClient.invalidateQueries({ queryKey: ["salary-profiles"] });
     },
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Create failed."),
+    onError: (err) => setCreateError(err instanceof Error ? err.message : "Create failed."),
+  });
+
+  const createSupervisor = useMutation({
+    mutationFn: api.createUser,
+    onSuccess: () => {
+      setMessage("Supervisor created.");
+      setCreateError("");
+      setCreateOpen(false);
+      createFormRef.current?.reset();
+      queryClient.invalidateQueries({ queryKey: ["supervisors"] });
+      queryClient.invalidateQueries({ queryKey: ["salary-profiles"] });
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
+    onError: (err) => setCreateError(err instanceof Error ? err.message : "Create failed."),
   });
 
   const importWorkers = useMutation({
@@ -208,9 +250,19 @@ export function WorkersListPage() {
   const deleteWorker = useMutation({
     mutationFn: api.deleteLabourWorker,
     onSuccess: () => {
-      setMessage("Labour removed.");
+      setMessage("Employee removed.");
       setSelected([]);
       queryClient.invalidateQueries({ queryKey: ["labour-workers"] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Remove failed."),
+  });
+
+  const deleteSupervisor = useMutation({
+    mutationFn: api.deleteUser,
+    onSuccess: () => {
+      setMessage("Supervisor removed.");
+      setSelected([]);
+      queryClient.invalidateQueries({ queryKey: ["supervisors"] });
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Remove failed."),
   });
@@ -234,32 +286,142 @@ export function WorkersListPage() {
     onError: (err) => setMessage(err instanceof Error ? err.message : "Bulk remove failed."),
   });
 
+  const bulkDeleteSupervisors = useMutation({
+    mutationFn: api.bulkDeleteSupervisors,
+    onSuccess: (result) => {
+      setMessage(`Removed ${result.deleted_count} supervisor${result.deleted_count === 1 ? "" : "s"}.`);
+      setSelected([]);
+      queryClient.invalidateQueries({ queryKey: ["supervisors"] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Bulk remove failed."),
+  });
+
   function submitCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setCreateError("");
     const form = new FormData(event.currentTarget);
+    const designation = String(form.get("designation") ?? "LABOUR");
+    const fullName = String(form.get("full_name") ?? "").trim();
+    const mobile = String(form.get("mobile_number") ?? "").trim();
+    const email = String(form.get("email") ?? "").trim();
+    const salary = String(form.get("salary") ?? "") || "0";
+    const dailySalary = String(form.get("daily_salary") ?? "") || null;
+
+    if (designation === "SUPERVISOR") {
+      if (!isSuperAdmin) {
+        setCreateError("Only Super Admin can add supervisors.");
+        return;
+      }
+      const parts = fullName.split(/\s+/, 2);
+      const usernameBase = (mobile || fullName.replace(/\s+/g, "").toLowerCase() || `sup${Date.now()}`).slice(0, 140);
+      const password =
+        mobile.length >= 8 ? mobile : `Sup${Date.now().toString().slice(-8)}`;
+      createSupervisor.mutate({
+        username: usernameBase,
+        password,
+        first_name: parts[0] || "Supervisor",
+        last_name: parts[1] || "",
+        email,
+        mobile_number: mobile || "",
+        role: "SUPERVISOR",
+        salary,
+        daily_salary: dailySalary,
+      });
+      return;
+    }
+
     createWorker.mutate({
-      full_name: String(form.get("full_name") ?? ""),
-      mobile_number: String(form.get("mobile_number") ?? ""),
-      salary: String(form.get("salary") ?? "0"),
-      daily_salary: String(form.get("daily_salary") ?? "") || null,
-      employee_id: String(form.get("employee_id") ?? ""),
+      full_name: fullName,
+      mobile_number: mobile,
+      email: email || undefined,
+      salary,
+      daily_salary: dailySalary,
+      designation: designation as "LABOUR" | "DRIVER",
       status: String(form.get("status") ?? "ACTIVE") as "ACTIVE" | "INACTIVE",
       joining_date: String(form.get("joining_date") ?? "") || undefined,
     });
-    event.currentTarget.reset();
   }
 
-  const allRows = workers.data?.results ?? [];
-  const rows = statusFilter === "ALL" ? allRows : allRows.filter((w) => w.status === statusFilter);
-  const workersPage = useTablePage(rows, { resetKey: `${statusFilter}-${nameSearch}-${mobileSearch}` });
-  const activeCount = allRows.filter((w) => w.status === "ACTIVE").length;
-  const inactiveCount = allRows.filter((w) => w.status === "INACTIVE").length;
-  const pageIds = workersPage.pageRows.map((worker) => worker.id);
-  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.includes(id));
-  const deleting = deleteWorker.isPending || bulkDeleteWorkers.isPending;
+  function closeCreateModal() {
+    setCreateOpen(false);
+    setCreateError("");
+  }
 
-  function toggle(id: number) {
-    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  type DirectoryRow = {
+    key: string;
+    kind: "labour" | "supervisor";
+    id: number;
+    full_name: string;
+    mobile_number: string | null;
+    designation: string;
+    salary: string | null;
+    daily_salary: string | null;
+    resolved_daily_wage: string | null;
+    href: string;
+    wageFromProfile?: boolean;
+  };
+
+  const rows = useMemo(() => {
+    const labourRows: DirectoryRow[] = (workers.data?.results ?? []).map((worker) => {
+      const wage = wageByUserId.get(worker.user_id);
+      return {
+        key: `labour-${worker.id}`,
+        kind: "labour" as const,
+        id: worker.id,
+        full_name: worker.full_name,
+        mobile_number: worker.mobile_number,
+        designation: worker.designation === "DRIVER" ? "Driver" : "Labour",
+        salary: wage?.monthly ?? worker.salary,
+        daily_salary: wage?.daily ?? worker.daily_salary,
+        resolved_daily_wage: wage?.daily ?? worker.resolved_daily_wage,
+        href: `/workers/${worker.id}`,
+        wageFromProfile: Boolean(wage),
+      };
+    });
+
+    if (!isSuperAdmin) return labourRows;
+
+    const name = nameSearch.trim().toLowerCase();
+    const mobile = mobileSearch.trim().toLowerCase();
+    const supervisorRows: DirectoryRow[] = (supervisors.data ?? [])
+      .filter((supervisor) => {
+        const fullName = (supervisor.full_name || supervisor.username || "").toLowerCase();
+        const phone = (supervisor.mobile_number || "").toLowerCase();
+        if (name && !fullName.includes(name)) return false;
+        if (mobile && !phone.includes(mobile)) return false;
+        return true;
+      })
+      .map((supervisor) => {
+        const wage = wageByUserId.get(supervisor.id);
+        return {
+          key: `supervisor-${supervisor.id}`,
+          kind: "supervisor" as const,
+          id: supervisor.id,
+          full_name: supervisor.full_name || supervisor.username,
+          mobile_number: supervisor.mobile_number,
+          designation: "Supervisor",
+          salary: wage?.monthly ?? null,
+          daily_salary: wage?.daily ?? null,
+          resolved_daily_wage: wage?.daily ?? null,
+          href: `/supervisors/${supervisor.id}`,
+          wageFromProfile: Boolean(wage),
+        };
+      });
+
+    return [...labourRows, ...supervisorRows].sort((a, b) => a.full_name.localeCompare(b.full_name));
+  }, [workers.data?.results, supervisors.data, isSuperAdmin, nameSearch, mobileSearch, wageByUserId]);
+
+  const workersPage = useTablePage(rows, { resetKey: `${nameSearch}-${mobileSearch}-${isSuperAdmin}` });
+  const pageIds = workersPage.pageRows.map((worker) => worker.key);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.includes(id));
+  const deleting =
+    deleteWorker.isPending ||
+    deleteSupervisor.isPending ||
+    bulkDeleteWorkers.isPending ||
+    bulkDeleteSupervisors.isPending;
+
+  function toggle(key: string) {
+    setSelected((prev) => (prev.includes(key) ? prev.filter((x) => x !== key) : [...prev, key]));
   }
 
   function togglePage() {
@@ -269,20 +431,24 @@ export function WorkersListPage() {
     });
   }
 
-  function confirmRemoveOne(worker: LabourProfile) {
-    if (!window.confirm(`Remove ${worker.full_name}? This cannot be undone.`)) return;
-    deleteWorker.mutate(worker.id);
+  function confirmRemoveOne(row: DirectoryRow) {
+    if (!window.confirm(`Remove ${row.full_name}? This cannot be undone.`)) return;
+    if (row.kind === "supervisor") deleteSupervisor.mutate(row.id);
+    else deleteWorker.mutate(row.id);
   }
 
   function confirmRemoveSelected() {
     if (!selected.length) {
-      setMessage("Select at least one worker to remove.");
+      setMessage("Select at least one employee to remove.");
       return;
     }
-    if (!window.confirm(`Remove ${selected.length} selected worker${selected.length === 1 ? "" : "s"}? This cannot be undone.`)) {
+    if (!window.confirm(`Remove ${selected.length} selected employee${selected.length === 1 ? "" : "s"}? This cannot be undone.`)) {
       return;
     }
-    bulkDeleteWorkers.mutate(selected);
+    const labourIds = selected.filter((key) => key.startsWith("labour-")).map((key) => Number(key.replace("labour-", "")));
+    const supervisorIds = selected.filter((key) => key.startsWith("supervisor-")).map((key) => Number(key.replace("supervisor-", "")));
+    if (labourIds.length) bulkDeleteWorkers.mutate(labourIds);
+    if (supervisorIds.length) bulkDeleteSupervisors.mutate(supervisorIds);
   }
 
   return (
@@ -290,18 +456,6 @@ export function WorkersListPage() {
       {message && <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{message}</p>}
 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-        <TabBar
-          active={statusFilter}
-          onChange={(next) => {
-            setStatusFilter(next);
-            setSelected([]);
-          }}
-          tabs={[
-            { id: "ALL", label: "All", count: allRows.length },
-            { id: "ACTIVE", label: "Active", count: activeCount },
-            { id: "INACTIVE", label: "Inactive", count: inactiveCount },
-          ]}
-        />
         <Toolbar>
           <div className="flex flex-wrap items-center gap-2">
             <SearchInput value={nameSearch} onChange={setNameSearch} placeholder="Search by name" />
@@ -332,9 +486,16 @@ export function WorkersListPage() {
                 }}
               />
             </label>
-            <button type="button" className={btnPrimaryClass} onClick={() => setCreateOpen(true)}>
+            <button
+              type="button"
+              className={btnPrimaryClass}
+              onClick={() => {
+                setCreateError("");
+                setCreateOpen(true);
+              }}
+            >
               <UserPlus className="h-4 w-4" />
-              Add Labour
+              Add Employee
             </button>
           </div>
         </Toolbar>
@@ -353,44 +514,44 @@ export function WorkersListPage() {
               </th>
               <th className="px-4 py-2.5">Name</th>
               <th className="px-4 py-2.5">Mobile</th>
-              <th className="px-4 py-2.5">Employee ID</th>
+              <th className="px-4 py-2.5">Designation</th>
               <th className="px-4 py-2.5">Monthly</th>
               <th className="px-4 py-2.5">Per day</th>
-              <th className="px-4 py-2.5">Status</th>
               <th className="px-4 py-2.5">Actions</th>
             </tr>
           </DataTableHead>
           <DataTableBody>
             {workersPage.pageRows.map((worker, i) => (
-              <DataTableRow key={worker.id} zebra={i % 2 === 1}>
+              <DataTableRow key={worker.key} zebra={i % 2 === 1}>
                 <DataTableCell>
                   <input
                     type="checkbox"
                     aria-label={`Select ${worker.full_name}`}
-                    checked={selected.includes(worker.id)}
-                    onChange={() => toggle(worker.id)}
+                    checked={selected.includes(worker.key)}
+                    onChange={() => toggle(worker.key)}
                   />
                 </DataTableCell>
                 <DataTableCell className="font-medium text-gray-900">{worker.full_name}</DataTableCell>
-                <DataTableCell>{worker.mobile_number}</DataTableCell>
-                <DataTableCell>{worker.employee_id || "—"}</DataTableCell>
-                <DataTableCell>{formatCurrency(worker.salary)}</DataTableCell>
+                <DataTableCell>{worker.mobile_number || "—"}</DataTableCell>
+                <DataTableCell>{worker.designation}</DataTableCell>
+                <DataTableCell>{worker.salary != null && worker.salary !== "" ? formatCurrency(worker.salary) : "—"}</DataTableCell>
                 <DataTableCell>
                   {worker.daily_salary != null && worker.daily_salary !== "" ? (
                     formatCurrency(worker.daily_salary)
-                  ) : (
+                  ) : worker.resolved_daily_wage != null && worker.resolved_daily_wage !== "" ? (
                     <span className="text-gray-500" title="Derived from monthly ÷ 26">
                       {formatCurrency(worker.resolved_daily_wage)}
-                      <span className="ml-1 text-[10px] uppercase tracking-wide">auto</span>
+                      {!worker.wageFromProfile && worker.kind === "labour" ? (
+                        <span className="ml-1 text-[10px] uppercase tracking-wide">auto</span>
+                      ) : null}
                     </span>
+                  ) : (
+                    "—"
                   )}
                 </DataTableCell>
                 <DataTableCell>
-                  <Badge tone={worker.status === "ACTIVE" ? "green" : "gray"}>{worker.status}</Badge>
-                </DataTableCell>
-                <DataTableCell>
                   <div className="flex items-center gap-3">
-                    <Link href={`/workers/${worker.id}`} className="text-sm font-medium text-violet-700 hover:underline">
+                    <Link href={worker.href} className="text-sm font-medium text-violet-700 hover:underline">
                       View
                     </Link>
                     <button
@@ -405,10 +566,10 @@ export function WorkersListPage() {
                 </DataTableCell>
               </DataTableRow>
             ))}
-            {!rows.length && !workers.isLoading && (
+            {!rows.length && !workers.isLoading && !(isSuperAdmin && supervisors.isLoading) && (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-500">
-                  No labour records found.
+                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-500">
+                  No employee records found.
                 </td>
               </tr>
             )}
@@ -427,28 +588,45 @@ export function WorkersListPage() {
 
       <Modal
         open={createOpen}
-        title="Add Labour"
+        title="Add Employee"
         subtitle="Create a new worker record"
-        onClose={() => setCreateOpen(false)}
+        onClose={closeCreateModal}
         footer={
           <>
-            <button type="button" className={btnSecondaryClass} onClick={() => setCreateOpen(false)}>
+            <button type="button" className={btnSecondaryClass} onClick={closeCreateModal}>
               Cancel
             </button>
-            <button type="submit" form="create-labour-form" className={btnPrimaryClass} disabled={createWorker.isPending}>
-              {createWorker.isPending ? "Saving..." : "Save"}
+            <button
+              type="submit"
+              form="create-labour-form"
+              className={btnPrimaryClass}
+              disabled={createWorker.isPending || createSupervisor.isPending}
+            >
+              {createWorker.isPending || createSupervisor.isPending ? "Saving..." : "Save"}
             </button>
           </>
         }
       >
-        <form id="create-labour-form" onSubmit={submitCreate}>
-          <FormRow label="Full name"><input className={inputClass} name="full_name" required /></FormRow>
-          <FormRow label="Mobile"><input className={inputClass} name="mobile_number" required /></FormRow>
-          <FormRow label="Monthly salary"><input className={inputClass} name="salary" type="number" min="0" step="0.01" required /></FormRow>
+        <form id="create-labour-form" ref={createFormRef} onSubmit={submitCreate}>
+          {createError && (
+            <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{createError}</p>
+          )}
+          <FormRow label="Full name"><input className={inputClass} name="full_name" /></FormRow>
+          <FormRow label="Mobile"><input className={inputClass} name="mobile_number" /></FormRow>
+          <FormRow label="Email">
+            <input className={inputClass} name="email" type="email" placeholder="Optional — for welcome login email" />
+          </FormRow>
+          <FormRow label="Monthly salary"><input className={inputClass} name="salary" type="number" min="0" step="0.01" /></FormRow>
           <FormRow label="Per day salary">
             <input className={inputClass} name="daily_salary" type="number" min="0" step="0.01" placeholder="Optional — else monthly ÷ 26" />
           </FormRow>
-          <FormRow label="Employee ID"><input className={inputClass} name="employee_id" /></FormRow>
+          <FormRow label="Designation">
+            <select className={inputClass} name="designation" defaultValue="LABOUR">
+              <option value="LABOUR">Labour</option>
+              <option value="DRIVER">Driver</option>
+              {isSuperAdmin ? <option value="SUPERVISOR">Supervisor</option> : null}
+            </select>
+          </FormRow>
           <FormRow label="Joining date"><input className={inputClass} name="joining_date" type="date" /></FormRow>
           <FormRow label="Status">
             <select className={inputClass} name="status" defaultValue="ACTIVE">
@@ -535,10 +713,6 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
     event.preventDefault();
     if (!summary.data) return;
     const assigned = summary.data.profile.assigned_projects ?? [];
-    if (!assigned.length) {
-      setMessage("This worker is not assigned to any project. Assign them on the project team first.");
-      return;
-    }
     const form = new FormData(event.currentTarget);
     const projectField = form.get("project");
     const project =
@@ -547,7 +721,7 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
         : projectField
           ? Number(projectField)
           : undefined;
-    if (!project) {
+    if (assigned.length > 1 && !project) {
       setMessage("Select a project for this worker.");
       return;
     }
@@ -574,7 +748,7 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
   const stats = summary.data.attendance_stats;
   const assignedProjects = profile.assigned_projects ?? [];
   const todayIso = now.toISOString().slice(0, 10);
-  const canMarkAttendance = assignedProjects.length > 0;
+  const canMarkAttendance = true;
   const paidSalaries = salaryRows.filter((row) => row.payment_status === "PAID");
   const pendingSalaries = salaryRows.filter((row) => row.payment_status === "PENDING");
   const totalNetPaid = paidSalaries.reduce((sum, row) => sum + Number(row.net_pay), 0);
@@ -591,7 +765,7 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link href="/workers" className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-coal shadow-sm">
           <ArrowLeft className="h-4 w-4" />
-          Back to labour list
+          Back to employee list
         </Link>
         <div className="flex flex-wrap items-center gap-2">
           <Link href={`/workers/${workerId}/history`} className={btnSecondaryClass}>
@@ -608,7 +782,7 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
             }}
           >
             <Trash2 className="h-4 w-4" />
-            {deleteWorker.isPending ? "Removing..." : "Remove Labour"}
+            {deleteWorker.isPending ? "Removing..." : "Remove Employee"}
           </button>
           <button
             type="button"
@@ -823,11 +997,12 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
 
       <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-600">Labour Profile</p>
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-600">Employee Profile</p>
           <h2 className="mt-1 text-base font-semibold text-coal">{profile.full_name}</h2>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Mobile</p><p className="font-bold">{profile.mobile_number}</p></div>
+            <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Mobile</p><p className="font-bold">{profile.mobile_number || "—"}</p></div>
             <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Employee ID</p><p className="font-bold">{profile.employee_id || "—"}</p></div>
+            <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Designation</p><p className="font-bold">{profile.designation === "DRIVER" ? "Driver" : "Labour"}</p></div>
             <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Monthly salary</p><p className="font-bold">{formatCurrency(profile.salary)}</p></div>
             <div className="rounded-md bg-gray-50 p-3">
               <p className="text-[10px] font-bold uppercase text-gray-500">Per day</p>
@@ -953,7 +1128,7 @@ export function WorkerAttendanceHistoryPage({ workerId }: { workerId: number }) 
 
   const attendance = useQuery({
     queryKey: ["attendance", "labour", summary.data?.profile.user_id],
-    queryFn: () => api.attendance(undefined, undefined, summary.data!.profile.user_id),
+    queryFn: () => api.attendance({ labourId: summary.data!.profile.user_id }),
     enabled: Boolean(summary.data?.profile.user_id),
   });
 
@@ -1122,14 +1297,7 @@ export function BulkAttendancePage() {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected.length) {
-      setMessage(`Select at least one ${audience === "labour" ? "worker" : "supervisor"}.`);
-      return;
-    }
-    const unassigned = selectedPeople.filter((person) => !(person.assigned_projects?.length ?? 0));
-    if (unassigned.length) {
-      setMessage(
-        `${unassigned.map((person) => person.full_name).join(", ")} ${unassigned.length === 1 ? "is" : "are"} not assigned to any project.`,
-      );
+      setMessage(`Select at least one ${audience === "labour" ? "employee" : "supervisor"}.`);
       return;
     }
     const form = new FormData(event.currentTarget);
@@ -1159,7 +1327,7 @@ export function BulkAttendancePage() {
 
       <div>
         <h2 className="text-base font-semibold text-coal">Bulk Attendance</h2>
-        <p className="text-xs text-gray-500">Select labour or supervisors and apply the same attendance in one action.</p>
+        <p className="text-xs text-gray-500">Select employees or supervisors and apply the same attendance in one action.</p>
       </div>
 
       <TabBar
@@ -1170,7 +1338,7 @@ export function BulkAttendancePage() {
           setMessage("");
         }}
         tabs={[
-          { id: "labour", label: "Labour", count: labourRows.length || workers.data?.count },
+          { id: "labour", label: "Employee", count: labourRows.length || workers.data?.count },
           { id: "supervisor", label: "Supervisors", count: supervisorRows.length },
         ]}
       />
@@ -1181,7 +1349,7 @@ export function BulkAttendancePage() {
         <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="font-black text-coal">
-              Select {audience === "labour" ? "Labour" : "Supervisors"} ({selected.length})
+              Select {audience === "labour" ? "Employee" : "Supervisors"} ({selected.length})
             </h3>
             <button
               type="button"
@@ -1210,7 +1378,7 @@ export function BulkAttendancePage() {
             ))}
             {!people.length && (
               <p className="text-sm text-gray-500">
-                {audience === "labour" ? "No labour workers found." : "No supervisors found."}
+                {audience === "labour" ? "No employees found." : "No supervisors found."}
               </p>
             )}
           </div>
@@ -1274,7 +1442,7 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
 
   const attendance = useQuery({
     queryKey: ["attendance", "supervisor", supervisorId],
-    queryFn: () => api.attendance(undefined, undefined, supervisorId),
+    queryFn: () => api.attendance({ labourId: supervisorId }),
   });
 
   const manual = useMutation({
@@ -1292,7 +1460,7 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
     mutationFn: () => api.deleteUser(supervisorId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["supervisors"] });
-      router.push("/people");
+      router.push("/workers");
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Remove failed."),
   });
@@ -1301,10 +1469,6 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
     event.preventDefault();
     if (!summary.data) return;
     const assigned = summary.data.profile.assigned_projects ?? [];
-    if (!assigned.length) {
-      setMessage("This supervisor is not assigned to any project. Assign them on the project team first.");
-      return;
-    }
     const form = new FormData(event.currentTarget);
     const projectField = form.get("project");
     const project =
@@ -1313,7 +1477,7 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
         : projectField
           ? Number(projectField)
           : undefined;
-    if (!project) {
+    if (assigned.length > 1 && !project) {
       setMessage("Select a project for this supervisor.");
       return;
     }
@@ -1337,7 +1501,7 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
   const stats = summary.data.attendance_stats;
   const records = attendance.data?.results ?? [];
   const assignedProjects = profile.assigned_projects ?? [];
-  const canMarkAttendance = assignedProjects.length > 0;
+  const canMarkAttendance = true;
   const salaryProfile = summary.data.salary_profile;
   const monthPresentDays = monthly.data?.present_days ?? 0;
   const monthAbsentDays = monthly.data?.absent_days ?? 0;
@@ -1346,7 +1510,7 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link href="/people" className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-coal shadow-sm">
+        <Link href="/workers" className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-coal shadow-sm">
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
@@ -1371,7 +1535,7 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-600">Supervisor Profile</p>
           <h2 className="mt-1 text-base font-semibold text-coal">{profile.full_name}</h2>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Mobile</p><p className="font-bold">{profile.mobile_number}</p></div>
+            <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Mobile</p><p className="font-bold">{profile.mobile_number || "—"}</p></div>
             <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Username</p><p className="font-bold">{profile.username}</p></div>
             <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Monthly salary</p><p className="font-bold">{formatCurrency(salaryProfile?.monthly_salary)}</p></div>
             <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Per day</p><p className="font-bold">{formatCurrency(salaryProfile?.daily_wage)}</p></div>
