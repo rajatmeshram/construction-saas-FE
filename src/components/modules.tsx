@@ -2194,7 +2194,6 @@ function AttendanceManager() {
   const [selected, setSelected] = useState<number[]>([]);
   const [workdayValue, setWorkdayValue] = useState(1);
   const [message, setMessage] = useState("");
-  const [projectId, setProjectId] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingConflicts, setPendingConflicts] = useState<
     Array<{ labour_id: number; date?: string; error: string; existing_workday?: number | null }>
@@ -2211,12 +2210,6 @@ function AttendanceManager() {
     queryKey: ["supervisors", "attendance-bulk"],
     queryFn: api.supervisors,
     enabled: hydrated && Boolean(accessToken) && isSuperAdmin,
-  });
-
-  const projects = useQuery({
-    queryKey: ["projects"],
-    queryFn: api.projects,
-    enabled: hydrated && Boolean(accessToken),
   });
 
   const labourRows = useMemo(() => {
@@ -2239,9 +2232,6 @@ function AttendanceManager() {
   }, [workers.data?.results, supervisors.data, isSuperAdmin]);
 
   const allIds = useMemo(() => labourRows.map((row) => row.id), [labourRows]);
-  const selectedPeople = labourRows.filter((person) => selected.includes(person.id));
-  const needsProjectPick = selectedPeople.some((person) => (person.assigned_projects?.length ?? 0) > 1);
-  const projectList = projects.data?.results ?? [];
   const workersPage = useTablePage(labourRows, { pageSize: 20 });
 
   const workdayOptions = [
@@ -2304,7 +2294,6 @@ function AttendanceManager() {
     return {
       labour_ids: selected,
       dates: selectedDates,
-      project: projectId ? Number(projectId) : undefined,
       punch_in_time: workdayValue === 0 ? undefined : "09:00",
       punch_out_time: workdayValue === 0 ? undefined : "18:00",
       workday_value: workdayValue,
@@ -2398,7 +2387,6 @@ function AttendanceManager() {
         const result = await api.bulkAttendance({
           labour_ids: Array.from(new Set(labour_ids)),
           dates: [date],
-          project: projectId ? Number(projectId) : undefined,
           punch_in_time: workdayValue === 0 ? undefined : "09:00",
           punch_out_time: workdayValue === 0 ? undefined : "18:00",
           workday_value: workdayValue,
@@ -2432,10 +2420,6 @@ function AttendanceManager() {
     }
     if (!selectedDates.length) {
       setMessage("Select at least one date on the calendar.");
-      return;
-    }
-    if (needsProjectPick && !projectId) {
-      setMessage("Select a project because at least one selected employee is on multiple projects.");
       return;
     }
     const coords = await readMarkerLocation();
@@ -2551,20 +2535,6 @@ function AttendanceManager() {
               );
             })}
           </div>
-
-          {needsProjectPick && (
-            <div className="mt-4 max-w-md">
-              <label className="mb-1 block text-xs font-bold uppercase text-gray-500">Project</label>
-              <select className={inputClass} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                <option value="">Select project</option>
-                {projectList.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.code} - {project.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <button type="button" className={btnPrimaryClass} disabled={saving} onClick={markAttendance}>

@@ -17,7 +17,7 @@ import { FormEvent, useMemo, useRef, useState } from "react";
 
 import { api } from "@/lib/api";
 import { useTablePage } from "@/lib/pagination";
-import type { AttendanceRecord, LabourProfile, MonthlyAttendance, Salary } from "@/lib/types";
+import type { AssignedProject, AttendanceRecord, LabourProfile, MonthlyAttendance, Project, Salary } from "@/lib/types";
 import { useAppSelector } from "@/store/hooks";
 import {
   Badge,
@@ -182,6 +182,7 @@ export function WorkersListPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
+  const [assigningKey, setAssigningKey] = useState<string | null>(null);
   const createFormRef = useRef<HTMLFormElement>(null);
 
   const workers = useQuery({
@@ -193,6 +194,11 @@ export function WorkersListPage() {
     queryKey: ["supervisors", "workers-directory"],
     queryFn: api.supervisors,
     enabled: isSuperAdmin,
+  });
+
+  const projects = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.projects,
   });
 
   const wageProfiles = useQuery({
@@ -296,6 +302,41 @@ export function WorkersListPage() {
     onError: (err) => setMessage(err instanceof Error ? err.message : "Bulk remove failed."),
   });
 
+  const assignProject = useMutation({
+    mutationFn: async ({
+      userId,
+      kind,
+      projectId,
+    }: {
+      userId: number;
+      kind: "labour" | "supervisor";
+      projectId: number | null;
+    }) => {
+      const field = kind === "supervisor" ? "supervisors" : "labours";
+      const working: Project[] = (projects.data?.results ?? []).map((project) => ({
+        ...project,
+        labours: [...(project.labours ?? [])],
+        supervisors: [...(project.supervisors ?? [])],
+      }));
+      for (const project of working) {
+        const current = project[field];
+        const has = current.includes(userId);
+        const shouldHave = projectId !== null && project.id === projectId;
+        if (has === shouldHave) continue;
+        const next = shouldHave ? [...current, userId] : current.filter((id) => id !== userId);
+        await api.updateProject(project.id, { [field]: next });
+        project[field] = next;
+      }
+    },
+    onSuccess: () => {
+      setMessage("Project assignment updated.");
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["labour-workers"] });
+      queryClient.invalidateQueries({ queryKey: ["supervisors"] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Project assignment failed."),
+  });
+
   function submitCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setCreateError("");
@@ -351,15 +392,19 @@ export function WorkersListPage() {
     key: string;
     kind: "labour" | "supervisor";
     id: number;
+    userId: number;
     full_name: string;
     mobile_number: string | null;
     designation: string;
     salary: string | null;
     daily_salary: string | null;
     resolved_daily_wage: string | null;
+    assigned_projects: AssignedProject[];
     href: string;
     wageFromProfile?: boolean;
   };
+
+  const projectList = projects.data?.results ?? [];
 
   const rows = useMemo(() => {
     const labourRows: DirectoryRow[] = (workers.data?.results ?? []).map((worker) => {
@@ -368,12 +413,14 @@ export function WorkersListPage() {
         key: `labour-${worker.id}`,
         kind: "labour" as const,
         id: worker.id,
+        userId: worker.user_id,
         full_name: worker.full_name,
         mobile_number: worker.mobile_number,
         designation: worker.designation === "DRIVER" ? "Driver" : "Labour",
         salary: wage?.monthly ?? worker.salary,
         daily_salary: wage?.daily ?? worker.daily_salary,
         resolved_daily_wage: wage?.daily ?? worker.resolved_daily_wage,
+        assigned_projects: worker.assigned_projects ?? [],
         href: `/workers/${worker.id}`,
         wageFromProfile: Boolean(wage),
       };
@@ -397,12 +444,14 @@ export function WorkersListPage() {
           key: `supervisor-${supervisor.id}`,
           kind: "supervisor" as const,
           id: supervisor.id,
+          userId: supervisor.id,
           full_name: supervisor.full_name || supervisor.username,
           mobile_number: supervisor.mobile_number,
           designation: "Supervisor",
           salary: wage?.monthly ?? null,
           daily_salary: wage?.daily ?? null,
           resolved_daily_wage: wage?.daily ?? null,
+          assigned_projects: supervisor.assigned_projects ?? [],
           href: `/supervisors/${supervisor.id}`,
           wageFromProfile: Boolean(wage),
         };
@@ -515,13 +564,19 @@ export function WorkersListPage() {
               <th className="px-4 py-2.5">Name</th>
               <th className="px-4 py-2.5">Mobile</th>
               <th className="px-4 py-2.5">Designation</th>
+              <th className="px-4 py-2.5">Project</th>
               <th className="px-4 py-2.5">Monthly</th>
               <th className="px-4 py-2.5">Per day</th>
               <th className="px-4 py-2.5">Actions</th>
             </tr>
           </DataTableHead>
           <DataTableBody>
-            {workersPage.pageRows.map((worker, i) => (
+            {workersPage.pageRows.map((worker, i) => {
+              const assigned = worker.assigned_projects;
+              const projectValue =
+                assigned.length === 1 ? String(assigned[0].id) : assigned.length === 0 ? "" : "multi";
+              const projectBusy = assigningKey === worker.key;
+              return (
               <DataTableRow key={worker.key} zebra={i % 2 === 1}>
                 <DataTableCell>
                   <input
@@ -534,6 +589,38 @@ export function WorkersListPage() {
                 <DataTableCell className="font-medium text-gray-900">{worker.full_name}</DataTableCell>
                 <DataTableCell>{worker.mobile_number || "—"}</DataTableCell>
                 <DataTableCell>{worker.designation}</DataTableCell>
+                <DataTableCell>
+                  <select
+                    className={`${inputClass} min-w-[10rem] py-1.5 text-sm`}
+                    aria-label={`Project for ${worker.full_name}`}
+                    disabled={projectBusy || projects.isLoading}
+                    value={projectValue}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (raw === "multi") return;
+                      const nextId = raw === "" ? null : Number(raw);
+                      if (assigned.length === 1 && nextId === assigned[0].id) return;
+                      if (assigned.length === 0 && nextId === null) return;
+                      setAssigningKey(worker.key);
+                      assignProject.mutate(
+                        { userId: worker.userId, kind: worker.kind, projectId: nextId },
+                        { onSettled: () => setAssigningKey(null) },
+                      );
+                    }}
+                  >
+                    <option value="">Unassigned</option>
+                    {assigned.length > 1 ? (
+                      <option value="multi" disabled>
+                        Multiple ({assigned.length}) — choose one
+                      </option>
+                    ) : null}
+                    {projectList.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.code} · {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </DataTableCell>
                 <DataTableCell>{worker.salary != null && worker.salary !== "" ? formatCurrency(worker.salary) : "—"}</DataTableCell>
                 <DataTableCell>
                   {worker.daily_salary != null && worker.daily_salary !== "" ? (
@@ -565,10 +652,11 @@ export function WorkersListPage() {
                   </div>
                 </DataTableCell>
               </DataTableRow>
-            ))}
+              );
+            })}
             {!rows.length && !workers.isLoading && !(isSuperAdmin && supervisors.isLoading) && (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-500">
+                <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-500">
                   No employee records found.
                 </td>
               </tr>
@@ -673,6 +761,11 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
     enabled: Boolean(summary.data?.profile.user_id),
   });
 
+  const projects = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.projects,
+  });
+
   const manual = useMutation({
     mutationFn: api.manualAttendance,
     onSuccess: () => {
@@ -712,19 +805,9 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
   function submitManual(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!summary.data) return;
-    const assigned = summary.data.profile.assigned_projects ?? [];
     const form = new FormData(event.currentTarget);
     const projectField = form.get("project");
-    const project =
-      assigned.length === 1
-        ? assigned[0].id
-        : projectField
-          ? Number(projectField)
-          : undefined;
-    if (assigned.length > 1 && !project) {
-      setMessage("Select a project for this worker.");
-      return;
-    }
+    const project = projectField ? Number(projectField) : undefined;
     manual.mutate({
       labour: summary.data.profile.user_id,
       project,
@@ -747,8 +830,8 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
   const profile = summary.data.profile;
   const stats = summary.data.attendance_stats;
   const assignedProjects = profile.assigned_projects ?? [];
+  const projectList = projects.data?.results ?? [];
   const todayIso = now.toISOString().slice(0, 10);
-  const canMarkAttendance = true;
   const paidSalaries = salaryRows.filter((row) => row.payment_status === "PAID");
   const pendingSalaries = salaryRows.filter((row) => row.payment_status === "PENDING");
   const totalNetPaid = paidSalaries.reduce((sum, row) => sum + Number(row.net_pay), 0);
@@ -872,7 +955,6 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
                 <th className="px-4 py-2.5">Gross</th>
                 <th className="px-4 py-2.5">Advances</th>
                 <th className="px-4 py-2.5">Net Pay</th>
-                <th className="px-4 py-2.5">Status</th>
               </tr>
             </DataTableHead>
             <DataTableBody>
@@ -884,9 +966,6 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
                   <DataTableCell>{formatCurrency(row.gross_pay)}</DataTableCell>
                   <DataTableCell>{formatCurrency(row.advances)}</DataTableCell>
                   <DataTableCell className="font-medium text-gray-900">{formatCurrency(row.net_pay)}</DataTableCell>
-                  <DataTableCell>
-                    <Badge tone={salaryStatusTone(row.payment_status)}>{row.payment_status}</Badge>
-                  </DataTableCell>
                 </DataTableRow>
               ))}
             </DataTableBody>
@@ -1076,28 +1155,19 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
 
       <form onSubmit={submitManual} className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
         <h3 className="text-sm font-semibold text-coal">Mark Attendance</h3>
-        {!canMarkAttendance && (
-          <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Assign this worker to a project before marking attendance.
-          </p>
-        )}
         <div className="mt-4 grid gap-4 md:grid-cols-3">
-          {assignedProjects.length > 1 ? (
-            <select className={inputClass} name="project" required defaultValue="">
-              <option value="" disabled>
-                Select project
+          <select
+            className={inputClass}
+            name="project"
+            defaultValue={assignedProjects.length === 1 ? String(assignedProjects[0].id) : ""}
+          >
+            <option value="">No project</option>
+            {projectList.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.code} - {project.name}
               </option>
-              {assignedProjects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.code} - {project.name}
-                </option>
-              ))}
-            </select>
-          ) : assignedProjects.length === 1 ? (
-            <div className={`${inputClass} bg-gray-50 text-sm text-gray-700`}>
-              Project: {assignedProjects[0].code} - {assignedProjects[0].name}
-            </div>
-          ) : null}
+            ))}
+          </select>
           <input className={inputClass} name="date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} />
           <input className={inputClass} name="punch_in_time" type="time" />
           <input className={inputClass} name="punch_out_time" type="time" />
@@ -1112,7 +1182,7 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
           <input className={inputClass} name="extra_hours" type="number" min="0" step="0.5" placeholder="Extra hours (optional)" />
           <input className={inputClass} name="notes" placeholder="Notes (optional)" />
         </div>
-        <button className={`${btnPrimaryClass} mt-3`} disabled={manual.isPending || !canMarkAttendance}>
+        <button className={`${btnPrimaryClass} mt-3`} disabled={manual.isPending}>
           {manual.isPending ? "Saving..." : "Save Attendance"}
         </button>
       </form>
@@ -1287,8 +1357,6 @@ export function BulkAttendancePage() {
   const people = audience === "labour" ? labourRows : supervisorRows;
   const allIds = useMemo(() => people.map((p) => p.id), [people]);
   const projectList = projects.data?.results ?? [];
-  const selectedPeople = people.filter((person) => selected.includes(person.id));
-  const needsProjectPick = selectedPeople.some((person) => (person.assigned_projects?.length ?? 0) > 1);
 
   function toggle(id: number) {
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -1302,10 +1370,6 @@ export function BulkAttendancePage() {
     }
     const form = new FormData(event.currentTarget);
     const projectValue = form.get("project");
-    if (needsProjectPick && !projectValue) {
-      setMessage("Select a project because at least one selected person is on multiple projects.");
-      return;
-    }
     bulk.mutate({
       labour_ids: selected,
       project: projectValue ? Number(projectValue) : undefined,
@@ -1387,18 +1451,14 @@ export function BulkAttendancePage() {
         <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
           <h3 className="font-black text-coal">Attendance Details</h3>
           <div className="mt-4 grid gap-4">
-            {needsProjectPick && (
-              <select className={inputClass} name="project" required defaultValue="">
-                <option value="" disabled>
-                  Select project
+            <select className={inputClass} name="project" defaultValue="">
+              <option value="">No project</option>
+              {projectList.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.code} - {project.name}
                 </option>
-                {projectList.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.code} - {project.name}
-                  </option>
-                ))}
-              </select>
-            )}
+              ))}
+            </select>
             <input className={inputClass} name="date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} />
             <input className={inputClass} name="punch_in_time" type="time" defaultValue="09:00" />
             <input className={inputClass} name="punch_out_time" type="time" defaultValue="18:00" />
@@ -1445,6 +1505,11 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
     queryFn: () => api.attendance({ labourId: supervisorId }),
   });
 
+  const projects = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.projects,
+  });
+
   const manual = useMutation({
     mutationFn: api.manualAttendance,
     onSuccess: () => {
@@ -1468,19 +1533,9 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
   function submitManual(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!summary.data) return;
-    const assigned = summary.data.profile.assigned_projects ?? [];
     const form = new FormData(event.currentTarget);
     const projectField = form.get("project");
-    const project =
-      assigned.length === 1
-        ? assigned[0].id
-        : projectField
-          ? Number(projectField)
-          : undefined;
-    if (assigned.length > 1 && !project) {
-      setMessage("Select a project for this supervisor.");
-      return;
-    }
+    const project = projectField ? Number(projectField) : undefined;
     manual.mutate({
       labour: supervisorId,
       project,
@@ -1501,7 +1556,7 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
   const stats = summary.data.attendance_stats;
   const records = attendance.data?.results ?? [];
   const assignedProjects = profile.assigned_projects ?? [];
-  const canMarkAttendance = true;
+  const projectList = projects.data?.results ?? [];
   const salaryProfile = summary.data.salary_profile;
   const monthPresentDays = monthly.data?.present_days ?? 0;
   const monthAbsentDays = monthly.data?.absent_days ?? 0;
@@ -1576,24 +1631,19 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
 
       <form onSubmit={submitManual} className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
         <h3 className="text-sm font-semibold text-coal">Mark Attendance</h3>
-        {!canMarkAttendance && (
-          <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Assign this supervisor to a project before marking attendance.
-          </p>
-        )}
         <div className="mt-4 grid gap-4 md:grid-cols-3">
-          {assignedProjects.length > 1 ? (
-            <select className={inputClass} name="project" required defaultValue="">
-              <option value="" disabled>Select project</option>
-              {assignedProjects.map((project) => (
-                <option key={project.id} value={project.id}>{project.code} - {project.name}</option>
-              ))}
-            </select>
-          ) : assignedProjects.length === 1 ? (
-            <div className={`${inputClass} bg-gray-50 text-sm text-gray-700`}>
-              Project: {assignedProjects[0].code} - {assignedProjects[0].name}
-            </div>
-          ) : null}
+          <select
+            className={inputClass}
+            name="project"
+            defaultValue={assignedProjects.length === 1 ? String(assignedProjects[0].id) : ""}
+          >
+            <option value="">No project</option>
+            {projectList.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.code} - {project.name}
+              </option>
+            ))}
+          </select>
           <input className={inputClass} name="date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} />
           <input className={inputClass} name="punch_in_time" type="time" />
           <input className={inputClass} name="punch_out_time" type="time" />
@@ -1608,7 +1658,7 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
           <input className={inputClass} name="extra_hours" type="number" min="0" step="0.5" placeholder="Extra hours (optional)" />
           <input className={inputClass} name="notes" placeholder="Notes (optional)" />
         </div>
-        <button className={`${btnPrimaryClass} mt-3`} disabled={manual.isPending || !canMarkAttendance}>
+        <button className={`${btnPrimaryClass} mt-3`} disabled={manual.isPending}>
           {manual.isPending ? "Saving..." : "Save Attendance"}
         </button>
       </form>
