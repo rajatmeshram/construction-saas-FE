@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Download } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { api } from "@/lib/api";
 import { useTablePage } from "@/lib/pagination";
@@ -98,25 +98,29 @@ export function UpdateWagesPage() {
     enabled: Boolean(selectedId),
   });
 
-  useEffect(() => {
-    const profile = existingProfile.data?.results?.[0];
+  const wageFormKey = !selectedId
+    ? "none"
+    : existingProfile.isFetching
+      ? `${selectedId}:loading`
+      : `${selectedId}:ready:${existingProfile.dataUpdatedAt}`;
+  const [seenWageFormKey, setSeenWageFormKey] = useState(wageFormKey);
+  if (seenWageFormKey !== wageFormKey) {
+    setSeenWageFormKey(wageFormKey);
     if (!selectedId) {
       setMonthlySalary("0");
       setDailyWage("");
       setOvertimeRate("0");
-      return;
-    }
-    if (existingProfile.isFetching) return;
-    if (profile) {
-      setMonthlySalary(String(profile.monthly_salary ?? "0"));
-      setDailyWage(String(profile.daily_wage ?? ""));
-      setOvertimeRate(String(profile.overtime_rate ?? "0"));
+    } else if (!existingProfile.isFetching) {
+      const profile = existingProfile.data?.results?.[0];
+      setMonthlySalary(String(profile?.monthly_salary ?? "0"));
+      setDailyWage(String(profile?.daily_wage ?? ""));
+      setOvertimeRate(String(profile?.overtime_rate ?? "0"));
     } else {
       setMonthlySalary("0");
       setDailyWage("");
       setOvertimeRate("0");
     }
-  }, [selectedId, existingProfile.data, existingProfile.isFetching]);
+  }
 
   const salaryProfile = useMutation({
     mutationFn: (payload: Parameters<typeof api.createSalaryProfile>[0]) => api.createSalaryProfile(payload),
