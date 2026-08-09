@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Download } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -44,6 +44,25 @@ function formatShortRange(start: string, end: string) {
     month: "short",
     year: "numeric",
   })}`;
+}
+
+function formatGeneratedAt(value?: string | null) {
+  if (!value) return "";
+  return new Date(value).toLocaleString("en-IN", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function sortByGeneratedDesc<T extends { id: number; generated_at?: string }>(items: T[]) {
+  return [...items].sort((a, b) => {
+    const ta = a.generated_at ? new Date(a.generated_at).getTime() : 0;
+    const tb = b.generated_at ? new Date(b.generated_at).getTime() : 0;
+    if (tb !== ta) return tb - ta;
+    return b.id - a.id;
+  });
 }
 
 /** Most recent Tuesday on or before today (local). */
@@ -226,13 +245,65 @@ export function UpdateWagesPage() {
 }
 
 export function RecordAdvancePage() {
+  const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const today = new Date();
+  const defaultFrom = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+  const defaultTo = today.toISOString().slice(0, 10);
+  const [historyFrom, setHistoryFrom] = useState(defaultFrom);
+  const [historyTo, setHistoryTo] = useState(defaultTo);
   const { wageUsers, isSuperAdmin } = usePayrollEmployees();
+
+  const recentAdvances = useQuery({
+    queryKey: ["advances", "recent"],
+    queryFn: () => api.advances({ page_size: 8, ordering: "-date" }),
+    enabled: isSuperAdmin,
+  });
+
+  const historyAdvances = useQuery({
+    queryKey: ["advances", "history", historyFrom, historyTo],
+    queryFn: () =>
+      api.advances({
+        date_from: historyFrom || undefined,
+        date_to: historyTo || undefined,
+        page_size: 200,
+        ordering: "-date",
+      }),
+    enabled: isSuperAdmin,
+  });
+
   const advance = useMutation({
     mutationFn: (payload: Parameters<typeof api.createAdvance>[0]) => api.createAdvance(payload),
-    onSuccess: () => setMessage("Advance payment recorded."),
+    onSuccess: () => {
+      setMessage("Advance payment recorded.");
+      queryClient.invalidateQueries({ queryKey: ["advances"] });
+    },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Advance creation failed."),
   });
+
+  const recentRows = recentAdvances.data?.results ?? [];
+  const historyRows = historyAdvances.data?.results ?? [];
+  const historyPage = useTablePage(historyRows, { pageSize: 10, resetKey: `${historyFrom}-${historyTo}` });
+  const historyTotal = historyRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+
+  async function downloadHistory() {
+    setExporting(true);
+    try {
+      const fromPart = historyFrom || "all";
+      const toPart = historyTo || "all";
+      await api.exportAdvances({
+        date_from: historyFrom || undefined,
+        date_to: historyTo || undefined,
+        filename: `advances_${fromPart}_${toPart}.xlsx`,
+      });
+      setMessage("Advance history downloaded.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Download failed.");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   if (!isSuperAdmin) {
     return (
@@ -288,6 +359,128 @@ export function RecordAdvancePage() {
           </button>
         </form>
       </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-100 px-4 py-3">
+            <h3 className="text-sm font-semibold text-coal">Recent advances</h3>
+            <p className="text-xs text-gray-500">Latest advance payments recorded</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[480px] text-left text-sm">
+              <thead className="border-b border-gray-200 bg-gray-50/80 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                <tr>
+                  <th className="px-4 py-2.5">Date</th>
+                  <th className="px-4 py-2.5">Person</th>
+                  <th className="px-4 py-2.5">Amount</th>
+                  <th className="px-4 py-2.5">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentRows.map((row, i) => (
+                  <tr key={row.id} className={i % 2 ? "bg-gray-50/60" : "bg-white"}>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-gray-700">
+                      {new Date(row.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2.5 font-medium text-gray-900">{row.labour_name || "—"}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 font-medium text-gray-900">{formatCurrency(row.amount)}</td>
+                    <td className="px-4 py-2.5 text-gray-600">{row.reason || "—"}</td>
+                  </tr>
+                ))}
+                {!recentAdvances.isLoading && !recentRows.length && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-sm text-gray-500">
+                      No advances recorded yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-end justify-between gap-3 border-b border-gray-100 px-4 py-3">
+            <div>
+              <h3 className="text-sm font-semibold text-coal">Advance history</h3>
+              <p className="text-xs text-gray-500">
+                {historyRows.length} record{historyRows.length === 1 ? "" : "s"} · Total {formatCurrency(historyTotal)}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="block">
+                <span className="text-xs font-medium text-gray-600">From</span>
+                <input
+                  className={`${inputClass} mt-1 py-1.5 text-sm`}
+                  type="date"
+                  value={historyFrom}
+                  onChange={(e) => setHistoryFrom(e.target.value)}
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-gray-600">To</span>
+                <input
+                  className={`${inputClass} mt-1 py-1.5 text-sm`}
+                  type="date"
+                  value={historyTo}
+                  onChange={(e) => setHistoryTo(e.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                className={`${btnSecondaryClass} py-1.5 text-xs`}
+                disabled={exporting || !historyRows.length}
+                onClick={downloadHistory}
+              >
+                <Download className="h-3.5 w-3.5" />
+                {exporting ? "Downloading..." : "Download XLSX"}
+              </button>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <thead className="border-b border-gray-200 bg-gray-50/80 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                <tr>
+                  <th className="px-4 py-2.5">Date</th>
+                  <th className="px-4 py-2.5">Person</th>
+                  <th className="px-4 py-2.5">Amount</th>
+                  <th className="px-4 py-2.5">Reason</th>
+                  <th className="px-4 py-2.5">Recorded by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyPage.pageRows.map((row, i) => (
+                  <tr key={row.id} className={i % 2 ? "bg-gray-50/60" : "bg-white"}>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-gray-700">
+                      {new Date(row.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2.5 font-medium text-gray-900">{row.labour_name || "—"}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 font-medium text-gray-900">{formatCurrency(row.amount)}</td>
+                    <td className="px-4 py-2.5 text-gray-600">{row.reason || "—"}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-gray-600">{row.created_by_name || "—"}</td>
+                  </tr>
+                ))}
+                {!historyAdvances.isLoading && !historyRows.length && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500">
+                      No advances in this date range.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <TablePagination
+            page={historyPage.page}
+            totalPages={historyPage.totalPages}
+            total={historyPage.total}
+            pageSize={historyPage.pageSize}
+            from={historyPage.from}
+            to={historyPage.to}
+            onPageChange={historyPage.setPage}
+          />
+        </div>
+      </div>
     </section>
   );
 }
@@ -303,8 +496,9 @@ export function PayrollManager() {
   const [weekEnd, setWeekEnd] = useState(mostRecentTuesdayISO());
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
-  const [rangeScope, setRangeScope] = useState<"all" | "individual">("all");
+  const [rangeScope, setRangeScope] = useState<"all" | "individual" | "site">("all");
   const [rangeLabourId, setRangeLabourId] = useState("");
+  const [rangeProjectId, setRangeProjectId] = useState("");
 
   const weeks = useQuery<Paginated<PayrollWeekListItem>>({
     queryKey: ["payroll-weeks"],
@@ -314,6 +508,12 @@ export function PayrollManager() {
     queryKey: ["payroll-site-sheets"],
     queryFn: api.payrollSiteSheets,
   });
+  const projects = useQuery({
+    queryKey: ["projects", "payroll-range"],
+    queryFn: api.projects,
+    enabled: isSuperAdmin,
+  });
+  const projectList = projects.data?.results ?? [];
 
   const generate = useMutation({
     mutationFn: () => api.generateWeeklyPayroll({ week_end: weekEnd }),
@@ -341,13 +541,23 @@ export function PayrollManager() {
         throw new Error("To date must be on or after from date.");
       }
       const labour = rangeScope === "individual" ? Number(rangeLabourId) : undefined;
+      const allSites = rangeScope === "site" && rangeProjectId === "all";
+      const project =
+        rangeScope === "site" && rangeProjectId && rangeProjectId !== "all"
+          ? Number(rangeProjectId)
+          : undefined;
       if (rangeScope === "individual" && !labour) {
         throw new Error("Select an employee.");
+      }
+      if (rangeScope === "site" && !allSites && !project) {
+        throw new Error("Select a site / project.");
       }
       return api.generateWeeklyPayroll({
         period_start: periodStart,
         period_end: periodEnd,
         labour,
+        project,
+        all_sites: allSites || undefined,
       });
     },
     onSuccess: (result) => {
@@ -376,9 +586,7 @@ export function PayrollManager() {
           <h2 className="text-base font-semibold text-coal">Generate weekly salary sheets</h2>
           <p className="mt-1 text-sm text-gray-500">
             Pay week is Wednesday–Tuesday. Generates company-wide (All) and site-wise sheets from approved attendance.
-            Automatic runs:{" "}
-            {/* <code className="rounded bg-gray-100 px-1 text-xs">python manage.py generate_weekly_payroll</code> each */}
-            Tuesday.
+            You can generate again for the same week anytime — each run adds a new sheet.
           </p>
           {message && <p className="mt-4 rounded-lg bg-violet-50 px-4 py-3 text-sm font-medium text-violet-900">{message}</p>}
           <form
@@ -408,8 +616,9 @@ export function PayrollManager() {
         <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
           <h2 className="text-base font-semibold text-coal">Generate salary by date range</h2>
           <p className="mt-1 text-sm text-gray-500">
-            Creates an All + site-wise salary sheet for a custom period — one person or everyone. Opens under All salary
-            sheets below.
+            Creates salary sheets for a custom period — everyone, one person, one site, or all sites. Individual creates
+            only that person’s sheet; site scope creates site sheet(s). You can generate again for the same dates anytime
+            — each run adds a new sheet.
           </p>
           {rangeMessage && (
             <p className="mt-4 rounded-lg bg-violet-50 px-4 py-3 text-sm font-medium text-violet-900">{rangeMessage}</p>
@@ -443,10 +652,11 @@ export function PayrollManager() {
               <select
                 className={inputClass}
                 value={rangeScope}
-                onChange={(event) => setRangeScope(event.target.value as "all" | "individual")}
+                onChange={(event) => setRangeScope(event.target.value as "all" | "individual" | "site")}
               >
                 <option value="all">All employees</option>
                 <option value="individual">Individual</option>
+                <option value="site">Site / project</option>
               </select>
             </Field>
             {rangeScope === "individual" && (
@@ -461,6 +671,24 @@ export function PayrollManager() {
                   {wageUsers.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.full_name || item.username} ({item.role === "SUPERVISOR" ? "Supervisor" : "Employee"})
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            {rangeScope === "site" && (
+              <Field label="Site">
+                <select
+                  className={inputClass}
+                  value={rangeProjectId}
+                  onChange={(event) => setRangeProjectId(event.target.value)}
+                  required
+                >
+                  <option value="">Select site</option>
+                  <option value="all">All sites</option>
+                  {projectList.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.code} · {project.name}
                     </option>
                   ))}
                 </select>
@@ -486,9 +714,14 @@ export function PayrollManager() {
 
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="overflow-hidden rounded-lg border border-gray-200/80 bg-white shadow-sm">
-          <div className="border-b border-gray-100 px-4 py-3">
-            <h2 className="text-base font-semibold text-coal">All salary sheets</h2>
-            <p className="text-xs text-gray-500">Company-wide weekly and date-range payroll</p>
+          <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
+            <div>
+              <h2 className="text-base font-semibold text-coal">All salary sheets</h2>
+              <p className="text-xs text-gray-500">Company-wide weekly and date-range payroll</p>
+            </div>
+            <Link href="/payroll/sheets/browse" className="shrink-0 text-sm font-medium text-violet-700 hover:text-violet-900">
+              View all
+            </Link>
           </div>
           <ul className="divide-y divide-gray-100">
             {weekRows.map((week) => (
@@ -499,7 +732,10 @@ export function PayrollManager() {
                 >
                   <div className="min-w-0">
                     <p className="truncate font-medium text-gray-900">{week.label}</p>
-                    <p className="text-xs text-gray-500">{formatShortRange(week.week_start, week.week_end)}</p>
+                    <p className="text-xs text-gray-500">
+                      {formatShortRange(week.week_start, week.week_end)}
+                      {week.generated_at ? ` · ${formatGeneratedAt(week.generated_at)}` : ""}
+                    </p>
                   </div>
                   <div className="shrink-0 text-right text-xs text-gray-500">
                     <p>{week.line_count} workers</p>
@@ -515,9 +751,14 @@ export function PayrollManager() {
         </div>
 
         <div className="overflow-hidden rounded-lg border border-gray-200/80 bg-white shadow-sm">
-          <div className="border-b border-gray-100 px-4 py-3">
-            <h2 className="text-base font-semibold text-coal">Site-wise payroll</h2>
-            <p className="text-xs text-gray-500">Per project from attendance that week</p>
+          <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
+            <div>
+              <h2 className="text-base font-semibold text-coal">Site-wise payroll</h2>
+              <p className="text-xs text-gray-500">Per project from attendance that week</p>
+            </div>
+            <Link href="/payroll/site-sheets/browse" className="shrink-0 text-sm font-medium text-violet-700 hover:text-violet-900">
+              View all
+            </Link>
           </div>
           <ul className="divide-y divide-gray-100">
             {siteRows.map((sheet) => (
@@ -530,7 +771,14 @@ export function PayrollManager() {
                     <p className="truncate font-medium text-gray-900">{sheet.label}</p>
                     <p className="text-xs text-gray-500">
                       {formatShortRange(sheet.week_start, sheet.week_end)}
-                      {sheet.supervisor_name ? ` · ${sheet.supervisor_name}` : ""}
+                      {sheet.generated_at ? ` · ${formatGeneratedAt(sheet.generated_at)}` : ""}
+                      {sheet.supervisor_name ? (
+                        <>
+                          {" · "}
+                          {sheet.supervisor_name}{" "}
+                          <span className="font-normal text-gray-400">(Supervisor)</span>
+                        </>
+                      ) : null}
                     </p>
                   </div>
                   <div className="shrink-0 text-right text-xs text-gray-500">
@@ -604,7 +852,10 @@ export function PayrollWeekDetailPage() {
           <div>
             <h2 className="text-lg font-semibold text-coal">{week?.label ?? "Salary sheet"}</h2>
             {week && (
-              <p className="text-xs text-gray-500">{formatShortRange(week.week_start, week.week_end)}</p>
+              <p className="text-xs text-gray-500">
+                {formatShortRange(week.week_start, week.week_end)}
+                {week.generated_at ? ` · ${formatGeneratedAt(week.generated_at)}` : ""}
+              </p>
             )}
           </div>
         </div>
@@ -620,54 +871,64 @@ export function PayrollWeekDetailPage() {
       {detail.isLoading && <p className="text-sm text-gray-500">Loading…</p>}
       {detail.isError && <p className="text-sm text-red-600">Could not load sheet.</p>}
 
-      {week && (
-        <div className="overflow-x-auto rounded-lg border border-gray-200/80 bg-white shadow-sm">
-          <div className="border-b border-gray-100 px-4 py-3 text-center">
-            <p className="text-sm font-bold tracking-wide text-gray-900">HITESH CONSTRUCTION</p>
-            <p className="text-xs font-semibold text-gray-700">Labour Attendance Wages</p>
-            <p className="mt-1 text-xs text-gray-500">{week.label}</p>
-          </div>
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-left">
-              <tr>
-                <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">SR</th>
-                <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Name</th>
-                <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Rate</th>
-                <DayHeaders headers={headers} />
-                <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Total</th>
-                <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Advance</th>
-                <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {week.lines.map((line, index) => (
-                <tr key={line.id} className={index % 2 ? "bg-gray-50/60" : ""}>
-                  <td className="px-3 py-2 text-center text-gray-500">{index + 1}</td>
-                  <td className="px-3 py-2 font-medium uppercase text-gray-900">{line.user_name}</td>
-                  <td className="px-3 py-2">{Number(line.rate).toFixed(2)}</td>
-                  {headers.map((h) => (
-                    <td key={h.key} className="px-2 py-2 text-center">
-                      {markCell(line.day_marks, h.key)}
-                    </td>
-                  ))}
-                  <td className="px-3 py-2 text-center">{line.total_days}</td>
-                  <td className="px-3 py-2">{Number(line.advances) > 0 ? Number(line.advances).toFixed(2) : ""}</td>
-                  <td className="px-3 py-2 font-medium">{formatCurrency(line.net)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t border-gray-200 bg-gray-50 font-semibold">
-                <td className="px-3 py-3" colSpan={3 + headers.length + 2}>
-                  Total Amount
-                </td>
-                <td className="px-3 py-3">{formatCurrency(week.total_net)}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
+      {week && <PayrollWeekSheetTable week={week} headers={headers} />}
     </section>
+  );
+}
+
+function PayrollWeekSheetTable({
+  week,
+  headers,
+}: {
+  week: PayrollWeekDetail;
+  headers: PayrollDayHeader[];
+}) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-gray-200/80 bg-white shadow-sm">
+      <div className="border-b border-gray-100 px-4 py-3 text-center">
+        <p className="text-sm font-bold tracking-wide text-gray-900">HITESH CONSTRUCTION</p>
+        <p className="text-xs font-semibold text-gray-700">Labour Attendance Wages</p>
+        <p className="mt-1 text-xs text-gray-500">{week.label}</p>
+      </div>
+      <table className="min-w-full text-sm">
+        <thead className="bg-gray-50 text-left">
+          <tr>
+            <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">SR</th>
+            <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Name</th>
+            <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Rate</th>
+            <DayHeaders headers={headers} />
+            <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Total</th>
+            <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Advance</th>
+            <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Amount</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {week.lines.map((line, index) => (
+            <tr key={line.id} className={index % 2 ? "bg-gray-50/60" : ""}>
+              <td className="px-3 py-2 text-center text-gray-500">{index + 1}</td>
+              <td className="px-3 py-2 font-medium uppercase text-gray-900">{line.user_name}</td>
+              <td className="px-3 py-2">{Number(line.rate).toFixed(2)}</td>
+              {headers.map((h) => (
+                <td key={h.key} className="px-2 py-2 text-center">
+                  {markCell(line.day_marks, h.key)}
+                </td>
+              ))}
+              <td className="px-3 py-2 text-center">{line.total_days}</td>
+              <td className="px-3 py-2">{Number(line.advances) > 0 ? Number(line.advances).toFixed(2) : ""}</td>
+              <td className="px-3 py-2 font-medium">{formatCurrency(line.net)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-gray-200 bg-gray-50 font-semibold">
+            <td className="px-3 py-3" colSpan={3 + headers.length + 2}>
+              Total Amount
+            </td>
+            <td className="px-3 py-3">{formatCurrency(week.total_net)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
   );
 }
 
@@ -687,11 +948,6 @@ export function PayrollSiteSheetDetailPage() {
 
   const sheet = detail.data as PayrollSiteSheetDetail | undefined;
   const headers = sheet?.day_headers ?? [];
-
-  const hasAdvance = useMemo(
-    () => (sheet?.lines ?? []).some((line) => Number(line.advances) > 0),
-    [sheet],
-  );
 
   async function download() {
     if (!sheet) return;
@@ -717,7 +973,10 @@ export function PayrollSiteSheetDetailPage() {
           <div>
             <h2 className="text-lg font-semibold text-coal">{sheet?.label ?? "Site salary sheet"}</h2>
             {sheet && (
-              <p className="text-xs text-gray-500">{formatShortRange(sheet.week_start, sheet.week_end)}</p>
+              <p className="text-xs text-gray-500">
+                {formatShortRange(sheet.week_start, sheet.week_end)}
+                {sheet.generated_at ? ` · ${formatGeneratedAt(sheet.generated_at)}` : ""}
+              </p>
             )}
           </div>
         </div>
@@ -733,60 +992,281 @@ export function PayrollSiteSheetDetailPage() {
       {detail.isLoading && <p className="text-sm text-gray-500">Loading…</p>}
       {detail.isError && <p className="text-sm text-red-600">Could not load site sheet.</p>}
 
-      {sheet && (
-        <div className="overflow-x-auto rounded-lg border border-gray-200/80 bg-white shadow-sm">
-          <div className="space-y-1 border-b border-gray-100 px-4 py-4 text-center">
-            <p className="text-base font-bold tracking-wide text-gray-900">HITESH CONSTRUCTION</p>
-            <p className="text-sm font-semibold text-gray-800">Labour Attendance Wages</p>
-            <p className="text-sm font-bold uppercase text-gray-900">{sheet.project_name}</p>
-            {sheet.supervisor_name ? (
-              <p className="text-sm font-semibold uppercase text-gray-800">{sheet.supervisor_name}</p>
-            ) : null}
-          </div>
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-left">
-              <tr>
-                <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">SR NO</th>
-                <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Name</th>
-                <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Rate</th>
-                <DayHeaders headers={headers} />
-                <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Total Days</th>
-                {hasAdvance && <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Advance</th>}
-                <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {sheet.lines.map((line, index) => (
-                <tr key={line.id} className={index % 2 ? "bg-gray-50/60" : ""}>
-                  <td className="px-3 py-2 text-center text-gray-500">{index + 1}</td>
-                  <td className="px-3 py-2 font-medium uppercase text-gray-900">{line.user_name}</td>
-                  <td className="px-3 py-2">{Number(line.rate).toFixed(2)}</td>
-                  {headers.map((h) => (
-                    <td key={h.key} className="px-2 py-2 text-center">
-                      {markCell(line.day_marks, h.key)}
-                    </td>
-                  ))}
-                  <td className="px-3 py-2 text-center">{line.total_days}</td>
-                  {hasAdvance && (
-                    <td className="px-3 py-2">
-                      {Number(line.advances) > 0 ? Number(line.advances).toFixed(2) : ""}
-                    </td>
-                  )}
-                  <td className="px-3 py-2 font-medium">{formatCurrency(line.amount)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t border-gray-200 bg-gray-50 font-semibold">
-                <td className="px-3 py-3" colSpan={3 + headers.length + (hasAdvance ? 1 : 0) + 1}>
-                  Total Amount
+      {sheet && <PayrollSiteSheetTable sheet={sheet} headers={headers} />}
+    </section>
+  );
+}
+
+function PayrollSiteSheetTable({
+  sheet,
+  headers,
+}: {
+  sheet: PayrollSiteSheetDetail;
+  headers: PayrollDayHeader[];
+}) {
+  const hasAdvance = (sheet.lines ?? []).some((line) => Number(line.advances) > 0);
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-gray-200/80 bg-white shadow-sm">
+      <div className="space-y-1 border-b border-gray-100 px-4 py-4 text-center">
+        <p className="text-base font-bold tracking-wide text-gray-900">HITESH CONSTRUCTION</p>
+        <p className="text-sm font-semibold text-gray-800">Labour Attendance Wages</p>
+        <p className="text-sm font-bold uppercase text-gray-900">{sheet.project_name}</p>
+        {sheet.supervisor_name ? (
+          <p className="text-sm font-semibold uppercase text-gray-800">
+            {sheet.supervisor_name}{" "}
+            <span className="text-xs font-normal normal-case text-gray-500">(Supervisor)</span>
+          </p>
+        ) : null}
+      </div>
+      <table className="min-w-full text-sm">
+        <thead className="bg-gray-50 text-left">
+          <tr>
+            <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">SR NO</th>
+            <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Name</th>
+            <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Rate</th>
+            <DayHeaders headers={headers} />
+            <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Total Days</th>
+            {hasAdvance && <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Advance</th>}
+            <th className="px-3 py-2 text-xs font-semibold uppercase text-gray-600">Amount</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {sheet.lines.map((line, index) => (
+            <tr key={line.id} className={index % 2 ? "bg-gray-50/60" : ""}>
+              <td className="px-3 py-2 text-center text-gray-500">{index + 1}</td>
+              <td className="px-3 py-2 font-medium uppercase text-gray-900">{line.user_name}</td>
+              <td className="px-3 py-2">{Number(line.rate).toFixed(2)}</td>
+              {headers.map((h) => (
+                <td key={h.key} className="px-2 py-2 text-center">
+                  {markCell(line.day_marks, h.key)}
                 </td>
-                <td className="px-3 py-3">{formatCurrency(sheet.total_amount)}</td>
-              </tr>
-            </tfoot>
-          </table>
+              ))}
+              <td className="px-3 py-2 text-center">{line.total_days}</td>
+              {hasAdvance && (
+                <td className="px-3 py-2">
+                  {Number(line.advances) > 0 ? Number(line.advances).toFixed(2) : ""}
+                </td>
+              )}
+              <td className="px-3 py-2 font-medium">{formatCurrency(line.amount)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-gray-200 bg-gray-50 font-semibold">
+            <td className="px-3 py-3" colSpan={3 + headers.length + (hasAdvance ? 1 : 0) + 1}>
+              Total Amount
+            </td>
+            <td className="px-3 py-3">{formatCurrency(sheet.total_amount)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+export function PayrollWeeksBrowsePage() {
+  const user = useAppSelector((state) => state.auth.user);
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
+  const [message, setMessage] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [index, setIndex] = useState(0);
+
+  const list = useQuery<Paginated<PayrollWeekListItem>>({
+    queryKey: ["payroll-weeks"],
+    queryFn: api.payrollWeeks,
+  });
+
+  const ordered = useMemo(
+    () => sortByGeneratedDesc(list.data?.results ?? []),
+    [list.data?.results],
+  );
+
+  const safeIndex = ordered.length ? Math.min(Math.max(index, 0), ordered.length - 1) : 0;
+  const currentMeta = ordered[safeIndex];
+  const id = currentMeta?.id ?? 0;
+
+  const detail = useQuery({
+    queryKey: ["payroll-week", id],
+    queryFn: () => api.payrollWeek(id),
+    enabled: id > 0,
+  });
+
+  const week = detail.data as PayrollWeekDetail | undefined;
+  const headers = week?.day_headers ?? [];
+  const older = safeIndex < ordered.length - 1 ? ordered[safeIndex + 1] : null;
+  const newer = safeIndex > 0 ? ordered[safeIndex - 1] : null;
+
+  async function download() {
+    if (!week) return;
+    setExporting(true);
+    try {
+      await api.exportPayrollWeek(week.id, `${week.label}.xlsx`);
+      setMessage("Downloaded Excel.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Download failed.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Link href="/payroll" className={`${btnSecondaryClass} inline-flex items-center gap-1.5 px-3 py-1.5 text-sm`}>
+            <ArrowLeft className="h-4 w-4" />
+            Back
+          </Link>
+          <div>
+            <h2 className="text-lg font-semibold text-coal">{week?.label ?? "All salary sheets"}</h2>
+            {week && (
+              <p className="text-xs text-gray-500">
+                {formatShortRange(week.week_start, week.week_end)}
+                {week.generated_at ? ` · ${formatGeneratedAt(week.generated_at)}` : ""}
+                {ordered.length ? ` · ${safeIndex + 1} of ${ordered.length}` : ""}
+              </p>
+            )}
+          </div>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className={`${btnSecondaryClass} inline-flex items-center gap-1 px-3 py-1.5 text-sm`}
+            disabled={!older}
+            onClick={() => setIndex(safeIndex + 1)}
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Prev
+          </button>
+          <button
+            type="button"
+            className={`${btnSecondaryClass} inline-flex items-center gap-1 px-3 py-1.5 text-sm`}
+            disabled={!newer}
+            onClick={() => setIndex(safeIndex - 1)}
+          >
+            Next
+            <ChevronRight className="h-4 w-4" />
+          </button>
+          {isSuperAdmin && week && (
+            <button type="button" className={`${btnSecondaryClass} inline-flex items-center gap-1.5`} disabled={exporting} onClick={download}>
+              <Download className="h-4 w-4" />
+              {exporting ? "Downloading..." : "Download Excel"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {message && <p className="rounded-lg bg-violet-50 px-4 py-3 text-sm font-medium text-violet-900">{message}</p>}
+      {(list.isLoading || detail.isLoading) && <p className="text-sm text-gray-500">Loading…</p>}
+      {!list.isLoading && !ordered.length && (
+        <p className="text-sm text-amber-700">No salary sheets generated yet.</p>
       )}
+      {detail.isError && <p className="text-sm text-red-600">Could not load sheet.</p>}
+      {week && <PayrollWeekSheetTable week={week} headers={headers} />}
+    </section>
+  );
+}
+
+export function PayrollSiteSheetsBrowsePage() {
+  const user = useAppSelector((state) => state.auth.user);
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
+  const [message, setMessage] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [index, setIndex] = useState(0);
+
+  const list = useQuery<Paginated<PayrollSiteSheetListItem>>({
+    queryKey: ["payroll-site-sheets"],
+    queryFn: api.payrollSiteSheets,
+  });
+
+  const ordered = useMemo(
+    () => sortByGeneratedDesc(list.data?.results ?? []),
+    [list.data?.results],
+  );
+
+  const safeIndex = ordered.length ? Math.min(Math.max(index, 0), ordered.length - 1) : 0;
+  const currentMeta = ordered[safeIndex];
+  const id = currentMeta?.id ?? 0;
+
+  const detail = useQuery({
+    queryKey: ["payroll-site-sheet", id],
+    queryFn: () => api.payrollSiteSheet(id),
+    enabled: id > 0,
+  });
+
+  const sheet = detail.data as PayrollSiteSheetDetail | undefined;
+  const headers = sheet?.day_headers ?? [];
+  const older = safeIndex < ordered.length - 1 ? ordered[safeIndex + 1] : null;
+  const newer = safeIndex > 0 ? ordered[safeIndex - 1] : null;
+
+  async function download() {
+    if (!sheet) return;
+    setExporting(true);
+    try {
+      await api.exportPayrollSiteSheet(sheet.id, `${sheet.week_label}_${sheet.project_name}.xlsx`);
+      setMessage("Downloaded Excel.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Download failed.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Link href="/payroll" className={`${btnSecondaryClass} inline-flex items-center gap-1.5 px-3 py-1.5 text-sm`}>
+            <ArrowLeft className="h-4 w-4" />
+            Back
+          </Link>
+          <div>
+            <h2 className="text-lg font-semibold text-coal">{sheet?.label ?? "Site-wise payroll"}</h2>
+            {sheet && (
+              <p className="text-xs text-gray-500">
+                {formatShortRange(sheet.week_start, sheet.week_end)}
+                {sheet.generated_at ? ` · ${formatGeneratedAt(sheet.generated_at)}` : ""}
+                {ordered.length ? ` · ${safeIndex + 1} of ${ordered.length}` : ""}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className={`${btnSecondaryClass} inline-flex items-center gap-1 px-3 py-1.5 text-sm`}
+            disabled={!older}
+            onClick={() => setIndex(safeIndex + 1)}
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Prev
+          </button>
+          <button
+            type="button"
+            className={`${btnSecondaryClass} inline-flex items-center gap-1 px-3 py-1.5 text-sm`}
+            disabled={!newer}
+            onClick={() => setIndex(safeIndex - 1)}
+          >
+            Next
+            <ChevronRight className="h-4 w-4" />
+          </button>
+          {isSuperAdmin && sheet && (
+            <button type="button" className={`${btnSecondaryClass} inline-flex items-center gap-1.5`} disabled={exporting} onClick={download}>
+              <Download className="h-4 w-4" />
+              {exporting ? "Downloading..." : "Download Excel"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {message && <p className="rounded-lg bg-violet-50 px-4 py-3 text-sm font-medium text-violet-900">{message}</p>}
+      {(list.isLoading || detail.isLoading) && <p className="text-sm text-gray-500">Loading…</p>}
+      {!list.isLoading && !ordered.length && (
+        <p className="text-sm text-amber-700">No site-wise sheets yet.</p>
+      )}
+      {detail.isError && <p className="text-sm text-red-600">Could not load site sheet.</p>}
+      {sheet && <PayrollSiteSheetTable sheet={sheet} headers={headers} />}
     </section>
   );
 }

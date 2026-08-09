@@ -21,6 +21,7 @@ import type {
   ProjectTask,
   Salary,
   SalaryProfile,
+  AdvancePayment,
   PayrollWeekListItem,
   PayrollWeekDetail,
   PayrollSiteSheetListItem,
@@ -187,12 +188,13 @@ type CreateTaskPayload = {
 
 type MachineryFormPayload = {
   name: string;
-  machine_type: string;
-  registration_number: string;
+  machine_type?: string;
+  registration_number?: string;
   vehicle_number?: string;
   vehicle_class?: string;
   chassis_number?: string;
   engine_number?: string;
+  driver?: number | null;
   insurance_provider?: string;
   insurance_policy_number?: string;
   insurance_start_date?: string;
@@ -222,12 +224,17 @@ function buildMachineryFormData(payload: MachineryFormPayload, options?: { clear
   };
 
   formData.append("name", payload.name);
-  formData.append("machine_type", payload.machine_type);
-  formData.append("registration_number", payload.registration_number);
+  appendText("machine_type", payload.machine_type);
+  appendText("registration_number", payload.registration_number);
   appendText("vehicle_number", payload.vehicle_number);
   appendText("vehicle_class", payload.vehicle_class);
   appendText("chassis_number", payload.chassis_number);
   appendText("engine_number", payload.engine_number);
+  if (payload.driver != null && payload.driver !== 0) {
+    formData.append("driver", String(payload.driver));
+  } else if (clearEmpty || payload.driver === null) {
+    formData.append("driver", "");
+  }
   appendText("insurance_provider", payload.insurance_provider);
   appendText("insurance_policy_number", payload.insurance_policy_number);
   appendText("insurance_start_date", payload.insurance_start_date);
@@ -288,16 +295,16 @@ export const api = {
   project: (id: number) => request<Project>(`/projects/items/${id}/`),
   createProject: (payload: {
     name: string;
-    code: string;
-    client_name: string;
-    location: string;
-    start_date: string;
-    end_date: string;
-    estimated_budget: string;
-    status: Project["status"];
-    description: string;
-    supervisors: number[];
-    labours: number[];
+    code?: string;
+    client_name?: string;
+    location?: string;
+    start_date?: string | null;
+    end_date?: string | null;
+    estimated_budget?: string;
+    status?: Project["status"];
+    description?: string;
+    supervisors?: number[];
+    labours?: number[];
   }) =>
     request<Project>("/projects/items/", {
       method: "POST",
@@ -306,6 +313,13 @@ export const api = {
   updateProject: (
     id: number,
     payload: Partial<{
+      name: string;
+      code: string;
+      client_name: string;
+      location: string;
+      start_date: string | null;
+      end_date: string | null;
+      estimated_budget: string;
       supervisors: number[];
       labours: number[];
       status: Project["status"];
@@ -316,6 +330,7 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  deleteProject: (id: number) => request<void>(`/projects/items/${id}/`, { method: "DELETE" }),
   tasks: (projectId?: number) =>
     request<{ results?: ProjectTask[] }>(
       `/projects/tasks/${buildListQuery({ project: projectId })}`,
@@ -395,6 +410,9 @@ export const api = {
     approved_by?: number;
     marked_at?: string;
     project?: number;
+    date_from?: string;
+    date_to?: string;
+    page_size?: number;
   }) => {
     const ids = Array.isArray(params?.ids) ? params.ids.join(",") : params?.ids;
     const labourIds = Array.isArray(params?.labour_ids) ? params.labour_ids.join(",") : params?.labour_ids;
@@ -407,7 +425,9 @@ export const api = {
         labour_ids: labourIds,
         approved_by: params?.approved_by,
         marked_at: params?.marked_at,
-        page_size: 200,
+        date_from: params?.date_from,
+        date_to: params?.date_to,
+        page_size: params?.page_size ?? 200,
       })}`,
     );
   },
@@ -433,10 +453,28 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   createAdvance: (payload: { labour: number; amount: string; date: string; reason: string }) =>
-    request("/payroll/advances/", {
+    request<AdvancePayment>("/payroll/advances/", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  advances: (params?: { date_from?: string; date_to?: string; labour?: number; page_size?: number; ordering?: string }) =>
+    request<{ count?: number; results?: AdvancePayment[] }>(
+      `/payroll/advances/${buildListQuery({
+        date_from: params?.date_from,
+        date_to: params?.date_to,
+        labour: params?.labour,
+        page_size: params?.page_size ?? 100,
+        ordering: params?.ordering ?? "-date",
+      })}`,
+    ),
+  exportAdvances: (params: { date_from?: string; date_to?: string; filename: string }) =>
+    downloadRequest(
+      `/payroll/advances/export/${buildListQuery({
+        date_from: params.date_from,
+        date_to: params.date_to,
+      })}`,
+      params.filename,
+    ),
   generateSalary: (payload: {
     labour: number;
     month?: number;
@@ -511,7 +549,7 @@ export const api = {
   salary: (id: number) => request<Salary>(`/payroll/salaries/${id}/`),
   payrollWeeks: () =>
     request<{ results?: PayrollWeekListItem[]; count?: number }>(
-      `/payroll/weeks/${buildListQuery({ page_size: 200, ordering: "-week_end" })}`,
+      `/payroll/weeks/${buildListQuery({ page_size: 200, ordering: "-generated_at,-id" })}`,
     ),
   payrollWeek: (id: number) => request<PayrollWeekDetail>(`/payroll/weeks/${id}/`),
   generateWeeklyPayroll: (payload?: {
@@ -519,6 +557,8 @@ export const api = {
     period_start?: string;
     period_end?: string;
     labour?: number;
+    project?: number;
+    all_sites?: boolean;
   }) =>
     request<PayrollWeekDetail & {
       created_salaries: number;
@@ -533,7 +573,7 @@ export const api = {
     downloadRequest(`/payroll/weeks/${id}/export/`, filename),
   payrollSiteSheets: () =>
     request<{ results?: PayrollSiteSheetListItem[]; count?: number }>(
-      `/payroll/site-sheets/${buildListQuery({ page_size: 200, ordering: "-week__week_end" })}`,
+      `/payroll/site-sheets/${buildListQuery({ page_size: 200, ordering: "-week__generated_at,-id" })}`,
     ),
   payrollSiteSheet: (id: number) => request<PayrollSiteSheetDetail>(`/payroll/site-sheets/${id}/`),
   exportPayrollSiteSheet: (id: number, filename: string) =>
@@ -611,12 +651,13 @@ export const api = {
     }),
   createMachinery: (payload: {
     name: string;
-    machine_type: string;
-    registration_number: string;
+    machine_type?: string;
+    registration_number?: string;
     vehicle_number?: string;
     vehicle_class?: string;
     chassis_number?: string;
     engine_number?: string;
+    driver?: number | null;
     insurance_provider?: string;
     insurance_policy_number?: string;
     insurance_start_date?: string;
@@ -643,12 +684,13 @@ export const api = {
     id: number,
     payload: {
       name: string;
-      machine_type: string;
-      registration_number: string;
+      machine_type?: string;
+      registration_number?: string;
       vehicle_number?: string;
       vehicle_class?: string;
       chassis_number?: string;
       engine_number?: string;
+      driver?: number | null;
       insurance_provider?: string;
       insurance_policy_number?: string;
       insurance_start_date?: string;
@@ -732,11 +774,19 @@ export const api = {
   exportMaintenance: (machineryId: number, filename: string) =>
     downloadRequest(`/operations/maintenance/export/?machinery=${machineryId}`, filename),
   reports: () => request<OperationsReport>("/operations/reports/"),
-  labourWorkers: (params?: { name?: string; mobile?: string; page?: number; page_size?: number; ordering?: string }) => {
+  labourWorkers: (params?: {
+    name?: string;
+    mobile?: string;
+    designation?: "LABOUR" | "DRIVER" | "OFFICE_STAFF";
+    page?: number;
+    page_size?: number;
+    ordering?: string;
+  }) => {
     return request<{ count: number; next: string | null; previous: string | null; results: LabourProfile[] }>(
       `/labour/workers/${buildListQuery({
         name: params?.name,
         mobile: params?.mobile,
+        designation: params?.designation,
         page: params?.page,
         page_size: params?.page_size ?? 100,
         ordering: params?.ordering,
@@ -758,7 +808,7 @@ export const api = {
     salary?: string;
     daily_salary?: string | null;
     employee_id?: string;
-    designation?: "LABOUR" | "DRIVER";
+    designation?: "LABOUR" | "DRIVER" | "OFFICE_STAFF";
     status?: "ACTIVE" | "INACTIVE";
     joining_date?: string;
     username?: string;
@@ -777,7 +827,7 @@ export const api = {
       salary: string;
       daily_salary: string | null;
       employee_id: string;
-      designation: "LABOUR" | "DRIVER";
+      designation: "LABOUR" | "DRIVER" | "OFFICE_STAFF";
       status: "ACTIVE" | "INACTIVE";
       joining_date: string;
     }>,

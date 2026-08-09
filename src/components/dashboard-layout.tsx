@@ -8,7 +8,9 @@ import {
   Factory,
   HardHat,
   LogOut,
+  Minus,
   Package,
+  Plus,
   ReceiptText,
   Timer,
   Truck,
@@ -20,7 +22,7 @@ import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { pageBg } from "@/components/ui";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -38,7 +40,7 @@ type NavGroup = { title: string; items: NavItem[] };
 
 const PAGE_TITLES: Record<string, string> = {
   "/dashboard": "Dashboard",
-  "/projects": "Projects",
+  "/projects": "Sites",
   "/materials": "Materials",
   "/vendors": "Vendors",
   "/expenses": "Expenses",
@@ -55,10 +57,12 @@ const PAGE_TITLES: Record<string, string> = {
 };
 
 function pageTitle(pathname: string) {
-  if (pathname.startsWith("/projects/")) return "Project Detail";
+  if (pathname.startsWith("/projects/")) return "Site Detail";
   if (pathname === "/attendance/bulk") return "Bulk Attendance";
   if (pathname === "/attendance/history") return "Attendance Records";
   if (pathname.startsWith("/attendance/")) return "Attendance Detail";
+  if (pathname === "/payroll/sheets/browse") return "All Salary Sheets";
+  if (pathname === "/payroll/site-sheets/browse") return "Site Salary Sheets";
   if (pathname.startsWith("/payroll/sheets/")) return "Salary Sheet";
   if (pathname.startsWith("/payroll/site-sheets/")) return "Site Salary Sheet";
   if (pathname.startsWith("/workers/") && pathname.endsWith("/history")) return "Attendance History";
@@ -82,6 +86,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
   const user = useAppSelector((state) => state.auth.user);
   const hydrated = useAppSelector((state) => state.auth.hydrated);
   const accessToken = useAppSelector((state) => state.auth.accessToken);
+  const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!hydrated) return;
@@ -111,7 +116,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
           {
             title: "Manage",
             items: [
-              { href: "/projects", label: "Projects", icon: Building2, match: (p: string) => p.startsWith("/projects") },
+              { href: "/projects", label: "Sites", icon: Building2, match: (p: string) => p.startsWith("/projects") },
               { href: "/workers", label: "Employee", icon: Users, match: (p: string) => p.startsWith("/workers") },
               { href: "/attendance", label: "Attendance", icon: Timer, match: (p: string) => p.startsWith("/attendance") },
               {
@@ -157,6 +162,19 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
 
   const title = pageTitle(pathname);
 
+  function isMenuOpen(item: NavItem, childActive: boolean) {
+    if (!item.children?.length) return false;
+    if (openMenus[item.href] != null) return openMenus[item.href];
+    return childActive;
+  }
+
+  function toggleMenu(href: string, currentlyOpen: boolean) {
+    setOpenMenus((prev) => ({
+      ...prev,
+      [href]: !currentlyOpen,
+    }));
+  }
+
   return (
     <main className={`min-h-screen ${pageBg}`}>
       <div className="flex min-h-screen">
@@ -180,12 +198,12 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                   {group.items.map((item) => {
                     const Icon = item.icon;
                     const active = isActive(item);
-                    const childActive = item.children?.some((child) => isActive(child));
+                    const childActive = Boolean(item.children?.some((child) => isActive(child)));
+                    const menuOpen = isMenuOpen(item, childActive);
                     return (
                       <div key={item.href}>
-                        <Link
-                          href={item.href}
-                          className={`relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
+                        <div
+                          className={`relative flex items-center rounded-lg transition ${
                             active || childActive
                               ? "bg-violet-100/80 font-medium text-violet-800"
                               : "text-gray-600 hover:bg-white hover:text-gray-900"
@@ -194,10 +212,34 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                           {(active || childActive) && (
                             <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-violet-600" />
                           )}
-                          <Icon className="h-4 w-4 shrink-0" />
-                          <span className="truncate">{item.label}</span>
-                        </Link>
-                        {item.children?.length ? (
+                          <Link
+                            href={item.href}
+                            className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-sm"
+                            onClick={() => {
+                              if (item.children?.length && openMenus[item.href] == null && !childActive) {
+                                setOpenMenus((prev) => ({ ...prev, [item.href]: true }));
+                              }
+                            }}
+                          >
+                            <Icon className="h-4 w-4 shrink-0" />
+                            <span className="truncate">{item.label}</span>
+                          </Link>
+                          {item.children?.length ? (
+                            <button
+                              type="button"
+                              aria-label={menuOpen ? `Collapse ${item.label}` : `Expand ${item.label}`}
+                              className="mr-1.5 rounded-md p-1 text-gray-500 hover:bg-white/80 hover:text-gray-800"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                toggleMenu(item.href, menuOpen);
+                              }}
+                            >
+                              {menuOpen ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                            </button>
+                          ) : null}
+                        </div>
+                        {item.children?.length && menuOpen ? (
                           <div className="ml-4 mt-0.5 space-y-0.5 border-l border-gray-200 pl-2">
                             {item.children.map((child) => {
                               const childIsActive = isActive(child);

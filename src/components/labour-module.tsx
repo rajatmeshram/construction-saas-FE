@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   CalendarClock,
   History,
-  IndianRupee,
   Timer,
   Trash2,
   Upload,
@@ -17,7 +16,15 @@ import { FormEvent, useMemo, useRef, useState } from "react";
 
 import { api } from "@/lib/api";
 import { useTablePage } from "@/lib/pagination";
-import type { AssignedProject, AttendanceRecord, LabourProfile, MonthlyAttendance, Project, Salary } from "@/lib/types";
+import type {
+  AssignedProject,
+  AttendanceRecord,
+  LabourProfile,
+  MonthlyAttendance,
+  Project,
+  Salary,
+  SiteAssignmentHistoryItem,
+} from "@/lib/types";
 import { useAppSelector } from "@/store/hooks";
 import {
   Badge,
@@ -28,7 +35,6 @@ import {
   DataTableRow,
   FormRow,
   Modal,
-  SearchInput,
   TabBar,
   TablePagination,
   Toolbar,
@@ -52,10 +58,46 @@ function formatDateTime(value?: string | null) {
   return new Date(value).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
 }
 
-function approvalTone(status: AttendanceRecord["approval_status"]): "green" | "amber" | "red" {
-  if (status === "APPROVED") return "green";
-  if (status === "REJECTED") return "red";
-  return "amber";
+function formatAssignmentWhen(value?: string | null) {
+  if (!value) return "—";
+  return new Date(value).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function SiteAssignmentHistoryPanel({ rows }: { rows?: SiteAssignmentHistoryItem[] }) {
+  const history = rows ?? [];
+  return (
+    <div className="mt-4 rounded-lg border border-gray-100 bg-gray-50/80 p-3">
+      <p className="text-[10px] font-bold uppercase text-gray-500">Site assignment history</p>
+      <p className="mt-1 text-xs text-gray-500">
+        Attendance is saved on this employee’s profile. Site history shows where they were assigned over time.
+      </p>
+      {history.length ? (
+        <ul className="mt-3 divide-y divide-gray-200 rounded-md border border-gray-200 bg-white">
+          {history.map((row) => (
+            <li key={row.id} className="flex flex-wrap items-start justify-between gap-2 px-3 py-2.5 text-sm">
+              <div className="min-w-0">
+                <Link href={`/projects/${row.project_id}`} className="font-medium text-violet-700 hover:underline">
+                  {row.project_code} · {row.project_name}
+                </Link>
+                <p className="text-xs text-gray-500">
+                  {formatAssignmentWhen(row.started_at)}
+                  {" → "}
+                  {row.is_current ? "Present" : formatAssignmentWhen(row.ended_at)}
+                </p>
+              </div>
+              <Badge tone={row.is_current ? "green" : "gray"}>{row.is_current ? "Current" : "Past"}</Badge>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-sm text-amber-700">No site assignment history yet.</p>
+      )}
+    </div>
+  );
 }
 
 function formatPeriod(start?: string, end?: string) {
@@ -87,6 +129,13 @@ function resolveWorkdayValue(dayData?: MonthlyAttendance["days"][string]): numbe
 function formatWorkdayValue(value?: number) {
   if (value == null) return "";
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function designationLabel(designation?: string) {
+  if (designation === "DRIVER") return "Driver";
+  if (designation === "OFFICE_STAFF") return "Office Staff";
+  if (designation === "SUPERVISOR") return "Supervisor";
+  return "Labour";
 }
 
 function calendarDayStyle(workday?: number, hasEntry?: boolean) {
@@ -153,13 +202,14 @@ function CompactCalendar({
           const key = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
           const dayData = data?.days[key];
           const workday = resolveWorkdayValue(dayData);
+          const monthShort = new Date(year, month - 1, 1).toLocaleString("en-IN", { month: "short" }).toLowerCase();
           return (
             <div
               key={key}
               className={`flex h-7 w-7 items-center justify-center rounded-md text-[10px] font-black ${calendarDayStyle(workday, Boolean(dayData))}`}
               title={
-                dayData
-                  ? `Credited workdays: ${formatWorkdayValue(workday)} · ${dayData.working_hours}h${dayData.project_name ? ` · ${dayData.project_name}` : ""}`
+                dayData && workday != null
+                  ? `${day} ${monthShort} - ${formatWorkdayValue(workday)}day`
                   : "No attendance"
               }
             >
@@ -177,7 +227,8 @@ export function WorkersListPage() {
   const user = useAppSelector((state) => state.auth.user);
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
   const [nameSearch, setNameSearch] = useState("");
-  const [mobileSearch, setMobileSearch] = useState("");
+  const [designationFilter, setDesignationFilter] = useState("all");
+  const [siteFilter, setSiteFilter] = useState("all");
   const [message, setMessage] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState("");
@@ -186,8 +237,8 @@ export function WorkersListPage() {
   const createFormRef = useRef<HTMLFormElement>(null);
 
   const workers = useQuery({
-    queryKey: ["labour-workers", nameSearch, mobileSearch],
-    queryFn: () => api.labourWorkers({ name: nameSearch || undefined, mobile: mobileSearch || undefined, ordering: "user__first_name" }),
+    queryKey: ["labour-workers", nameSearch],
+    queryFn: () => api.labourWorkers({ name: nameSearch || undefined, ordering: "user__first_name" }),
   });
 
   const supervisors = useQuery({
@@ -377,7 +428,7 @@ export function WorkersListPage() {
       email: email || undefined,
       salary,
       daily_salary: dailySalary,
-      designation: designation as "LABOUR" | "DRIVER",
+      designation: designation as "LABOUR" | "DRIVER" | "OFFICE_STAFF",
       status: String(form.get("status") ?? "ACTIVE") as "ACTIVE" | "INACTIVE",
       joining_date: String(form.get("joining_date") ?? "") || undefined,
     });
@@ -416,7 +467,7 @@ export function WorkersListPage() {
         userId: worker.user_id,
         full_name: worker.full_name,
         mobile_number: worker.mobile_number,
-        designation: worker.designation === "DRIVER" ? "Driver" : "Labour",
+        designation: designationLabel(worker.designation),
         salary: wage?.monthly ?? worker.salary,
         daily_salary: wage?.daily ?? worker.daily_salary,
         resolved_daily_wage: wage?.daily ?? worker.resolved_daily_wage,
@@ -426,41 +477,60 @@ export function WorkersListPage() {
       };
     });
 
-    if (!isSuperAdmin) return labourRows;
-
     const name = nameSearch.trim().toLowerCase();
-    const mobile = mobileSearch.trim().toLowerCase();
-    const supervisorRows: DirectoryRow[] = (supervisors.data ?? [])
-      .filter((supervisor) => {
-        const fullName = (supervisor.full_name || supervisor.username || "").toLowerCase();
-        const phone = (supervisor.mobile_number || "").toLowerCase();
-        if (name && !fullName.includes(name)) return false;
-        if (mobile && !phone.includes(mobile)) return false;
-        return true;
-      })
-      .map((supervisor) => {
-        const wage = wageByUserId.get(supervisor.id);
-        return {
-          key: `supervisor-${supervisor.id}`,
-          kind: "supervisor" as const,
-          id: supervisor.id,
-          userId: supervisor.id,
-          full_name: supervisor.full_name || supervisor.username,
-          mobile_number: supervisor.mobile_number,
-          designation: "Supervisor",
-          salary: wage?.monthly ?? null,
-          daily_salary: wage?.daily ?? null,
-          resolved_daily_wage: wage?.daily ?? null,
-          assigned_projects: supervisor.assigned_projects ?? [],
-          href: `/supervisors/${supervisor.id}`,
-          wageFromProfile: Boolean(wage),
-        };
-      });
+    let combined: DirectoryRow[] = labourRows;
 
-    return [...labourRows, ...supervisorRows].sort((a, b) => a.full_name.localeCompare(b.full_name));
-  }, [workers.data?.results, supervisors.data, isSuperAdmin, nameSearch, mobileSearch, wageByUserId]);
+    if (isSuperAdmin) {
+      const supervisorRows: DirectoryRow[] = (supervisors.data ?? [])
+        .filter((supervisor) => {
+          const fullName = (supervisor.full_name || supervisor.username || "").toLowerCase();
+          if (name && !fullName.includes(name)) return false;
+          return true;
+        })
+        .map((supervisor) => {
+          const wage = wageByUserId.get(supervisor.id);
+          return {
+            key: `supervisor-${supervisor.id}`,
+            kind: "supervisor" as const,
+            id: supervisor.id,
+            userId: supervisor.id,
+            full_name: supervisor.full_name || supervisor.username,
+            mobile_number: supervisor.mobile_number,
+            designation: "Supervisor",
+            salary: wage?.monthly ?? null,
+            daily_salary: wage?.daily ?? null,
+            resolved_daily_wage: wage?.daily ?? null,
+            assigned_projects: supervisor.assigned_projects ?? [],
+            href: `/supervisors/${supervisor.id}`,
+            wageFromProfile: Boolean(wage),
+          };
+        });
+      combined = [...labourRows, ...supervisorRows].sort((a, b) => a.full_name.localeCompare(b.full_name));
+    }
 
-  const workersPage = useTablePage(rows, { resetKey: `${nameSearch}-${mobileSearch}-${isSuperAdmin}` });
+    return combined.filter((row) => {
+      if (designationFilter !== "all" && row.designation !== designationFilter) return false;
+      if (siteFilter === "unassigned") return !row.assigned_projects.length;
+      if (siteFilter !== "all") {
+        const siteId = Number(siteFilter);
+        return row.assigned_projects.some((project) => project.id === siteId);
+      }
+      return true;
+    });
+  }, [
+    workers.data?.results,
+    supervisors.data,
+    isSuperAdmin,
+    nameSearch,
+    designationFilter,
+    siteFilter,
+    wageByUserId,
+  ]);
+
+  const workersPage = useTablePage(rows, {
+    pageSize: 100,
+    resetKey: `${nameSearch}-${designationFilter}-${siteFilter}-${isSuperAdmin}`,
+  });
   const pageIds = workersPage.pageRows.map((worker) => worker.key);
   const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.includes(id));
   const deleting =
@@ -506,9 +576,40 @@ export function WorkersListPage() {
 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
         <Toolbar>
-          <div className="flex flex-wrap items-center gap-2">
-            <SearchInput value={nameSearch} onChange={setNameSearch} placeholder="Search by name" />
-            <SearchInput value={mobileSearch} onChange={setMobileSearch} placeholder="Search by mobile" />
+          <div className="flex flex-nowrap items-center gap-2">
+            <input
+              className={`${inputClass} !w-36 shrink-0 py-1.5`}
+              value={nameSearch}
+              onChange={(e) => setNameSearch(e.target.value)}
+              placeholder="Search by name"
+              aria-label="Search by name"
+            />
+            <select
+              className={`${inputClass} !w-36 shrink-0 py-1.5`}
+              value={designationFilter}
+              onChange={(e) => setDesignationFilter(e.target.value)}
+              aria-label="Filter by designation"
+            >
+              <option value="all">All designations</option>
+              <option value="Labour">Labour</option>
+              <option value="Driver">Driver</option>
+              <option value="Office Staff">Office Staff</option>
+              {isSuperAdmin ? <option value="Supervisor">Supervisor</option> : null}
+            </select>
+            <select
+              className={`${inputClass} !w-40 shrink-0 py-1.5`}
+              value={siteFilter}
+              onChange={(e) => setSiteFilter(e.target.value)}
+              aria-label="Filter by site"
+            >
+              <option value="all">All sites</option>
+              <option value="unassigned">Unassigned</option>
+              {projectList.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.code ? `${project.code} · ${project.name}` : project.name}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {selected.length > 0 && (
@@ -590,6 +691,13 @@ export function WorkersListPage() {
                 <DataTableCell>{worker.mobile_number || "—"}</DataTableCell>
                 <DataTableCell>{worker.designation}</DataTableCell>
                 <DataTableCell>
+                  {worker.kind === "supervisor" ? (
+                    <span className="text-sm text-gray-700">
+                      {assigned.length
+                        ? assigned.map((project) => (project.code ? `${project.code} · ${project.name}` : project.name)).join(" | ")
+                        : "Unassigned"}
+                    </span>
+                  ) : (
                   <select
                     className={`${inputClass} min-w-[10rem] py-1.5 text-sm`}
                     aria-label={`Project for ${worker.full_name}`}
@@ -620,6 +728,7 @@ export function WorkersListPage() {
                       </option>
                     ))}
                   </select>
+                  )}
                 </DataTableCell>
                 <DataTableCell>{worker.salary != null && worker.salary !== "" ? formatCurrency(worker.salary) : "—"}</DataTableCell>
                 <DataTableCell>
@@ -712,6 +821,7 @@ export function WorkersListPage() {
             <select className={inputClass} name="designation" defaultValue="LABOUR">
               <option value="LABOUR">Labour</option>
               <option value="DRIVER">Driver</option>
+              <option value="OFFICE_STAFF">Office Staff</option>
               {isSuperAdmin ? <option value="SUPERVISOR">Supervisor</option> : null}
             </select>
           </FormRow>
@@ -732,7 +842,6 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
-  const [salaryResult, setSalaryResult] = useState<{ working_days: string; gross_pay: string; net_pay: string } | null>(null);
   const [selectedSalary, setSelectedSalary] = useState<Salary | null>(null);
   const now = new Date();
   const [calendarMonth, setCalendarMonth] = useState(now.getMonth() + 1);
@@ -761,38 +870,6 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
     enabled: Boolean(summary.data?.profile.user_id),
   });
 
-  const projects = useQuery({
-    queryKey: ["projects"],
-    queryFn: api.projects,
-  });
-
-  const manual = useMutation({
-    mutationFn: api.manualAttendance,
-    onSuccess: () => {
-      setMessage("Attendance marked.");
-      queryClient.invalidateQueries({ queryKey: ["labour-summary", workerId] });
-      queryClient.invalidateQueries({ queryKey: ["attendance"] });
-      queryClient.invalidateQueries({ queryKey: ["monthly-attendance"] });
-    },
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Failed to mark attendance."),
-  });
-
-  const generateSalary = useMutation({
-    mutationFn: api.generateSalary,
-    onSuccess: (salary) => {
-      setSalaryResult({
-        working_days: salary.working_days,
-        gross_pay: salary.gross_pay,
-        net_pay: salary.net_pay,
-      });
-      setMessage(`Salary generated for ${now.toLocaleString("en-IN", { month: "long" })} till ${now.toLocaleDateString("en-IN")}.`);
-      queryClient.invalidateQueries({ queryKey: ["labour-summary", workerId] });
-      queryClient.invalidateQueries({ queryKey: ["salaries"] });
-      queryClient.invalidateQueries({ queryKey: ["worker-salaries"] });
-    },
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Salary generation failed."),
-  });
-
   const deleteWorker = useMutation({
     mutationFn: () => api.deleteLabourWorker(workerId),
     onSuccess: () => {
@@ -801,25 +878,6 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Remove failed."),
   });
-
-  function submitManual(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!summary.data) return;
-    const form = new FormData(event.currentTarget);
-    const projectField = form.get("project");
-    const project = projectField ? Number(projectField) : undefined;
-    manual.mutate({
-      labour: summary.data.profile.user_id,
-      project,
-      date: String(form.get("date")),
-      punch_in_time: String(form.get("punch_in_time") || "") || undefined,
-      punch_out_time: String(form.get("punch_out_time") || "") || undefined,
-      workday_value: Number(form.get("workday_value")),
-      extra_hours: Number(form.get("extra_hours") || 0) || undefined,
-      notes: String(form.get("notes") || ""),
-    });
-    event.currentTarget.reset();
-  }
 
   const salaryRows = workerSalaries.data ?? [];
   const salariesPage = useTablePage(salaryRows, { resetKey: `${salaryMonth}-${salaryYear}-${workerId}` });
@@ -830,8 +888,6 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
   const profile = summary.data.profile;
   const stats = summary.data.attendance_stats;
   const assignedProjects = profile.assigned_projects ?? [];
-  const projectList = projects.data?.results ?? [];
-  const todayIso = now.toISOString().slice(0, 10);
   const paidSalaries = salaryRows.filter((row) => row.payment_status === "PAID");
   const pendingSalaries = salaryRows.filter((row) => row.payment_status === "PENDING");
   const totalNetPaid = paidSalaries.reduce((sum, row) => sum + Number(row.net_pay), 0);
@@ -867,48 +923,20 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
             <Trash2 className="h-4 w-4" />
             {deleteWorker.isPending ? "Removing..." : "Remove Employee"}
           </button>
-          <button
-            type="button"
-            className={btnPrimaryClass}
-            disabled={generateSalary.isPending}
-            onClick={() =>
-              generateSalary.mutate({
-                labour: profile.user_id,
-                month: now.getMonth() + 1,
-                year: now.getFullYear(),
-                till_date: todayIso,
-                deductions: "0",
-              })
-            }
-          >
-            <IndianRupee className="h-4 w-4" />
-            {generateSalary.isPending ? "Generating..." : "Generate Salary Till Today"}
-          </button>
         </div>
       </div>
 
       {message && <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{message}</p>}
-
-      {salaryResult && (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-          <p className="font-semibold">Latest salary (present days till today)</p>
-          <div className="mt-2 grid gap-2 sm:grid-cols-3">
-            <p>Working days: <span className="font-bold">{salaryResult.working_days}</span></p>
-            <p>Gross pay: <span className="font-bold">{formatCurrency(salaryResult.gross_pay)}</span></p>
-            <p>Net pay: <span className="font-bold">{formatCurrency(salaryResult.net_pay)}</span></p>
-          </div>
-        </div>
-      )}
 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="border-b border-gray-100 px-4 py-3">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h3 className="text-base font-semibold text-coal">Salary Payments</h3>
-              <p className="text-xs text-gray-500">
+              {/* <p className="text-xs text-gray-500">
                 {paidSalaries.length} paid · {pendingSalaries.length} pending
                 {paidSalaries.length > 0 ? ` · Total paid ${formatCurrency(totalNetPaid)}` : ""}
-              </p>
+              </p> */}
             </div>
             <div className="flex flex-wrap items-end gap-2">
               <label className="block">
@@ -1081,7 +1109,7 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Mobile</p><p className="font-bold">{profile.mobile_number || "—"}</p></div>
             <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Employee ID</p><p className="font-bold">{profile.employee_id || "—"}</p></div>
-            <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Designation</p><p className="font-bold">{profile.designation === "DRIVER" ? "Driver" : "Labour"}</p></div>
+            <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Designation</p><p className="font-bold">{designationLabel(profile.designation)}</p></div>
             <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Monthly salary</p><p className="font-bold">{formatCurrency(profile.salary)}</p></div>
             <div className="rounded-md bg-gray-50 p-3">
               <p className="text-[10px] font-bold uppercase text-gray-500">Per day</p>
@@ -1095,7 +1123,7 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
             <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Working Hours</p><p className="font-bold">{stats.total_working_hours}h</p></div>
           </div>
           <div className="mt-4 rounded-lg border border-gray-100 bg-gray-50/80 p-3">
-            <p className="text-[10px] font-bold uppercase text-gray-500">Assigned Projects</p>
+            <p className="text-[10px] font-bold uppercase text-gray-500">Current site</p>
             {assignedProjects.length ? (
               <div className="mt-2 flex flex-wrap gap-2">
                 {assignedProjects.map((project) => (
@@ -1110,10 +1138,11 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
               </div>
             ) : (
               <p className="mt-2 text-sm text-amber-700">
-                No project assigned yet. Add this worker from the project team page.
+                No site assigned yet. Assign from Employee directory or Site team.
               </p>
             )}
           </div>
+          <SiteAssignmentHistoryPanel rows={summary.data.site_assignment_history} />
           {summary.data.salary_profile && (
             <div className="mt-4 rounded-2xl border border-gray-100 p-4">
               <p className="text-sm font-bold text-coal">Payroll</p>
@@ -1152,40 +1181,6 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
           </div>
         </div>
       </div>
-
-      <form onSubmit={submitManual} className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
-        <h3 className="text-sm font-semibold text-coal">Mark Attendance</h3>
-        <div className="mt-4 grid gap-4 md:grid-cols-3">
-          <select
-            className={inputClass}
-            name="project"
-            defaultValue={assignedProjects.length === 1 ? String(assignedProjects[0].id) : ""}
-          >
-            <option value="">No project</option>
-            {projectList.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.code} - {project.name}
-              </option>
-            ))}
-          </select>
-          <input className={inputClass} name="date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} />
-          <input className={inputClass} name="punch_in_time" type="time" />
-          <input className={inputClass} name="punch_out_time" type="time" />
-          <select className={inputClass} name="workday_value" defaultValue="1">
-            <option value="0">Absent (0)</option>
-            <option value="1">1 workday</option>
-            <option value="1.5">1.5 workdays</option>
-            <option value="2">2 workdays</option>
-            <option value="2.5">2.5 workdays</option>
-            <option value="3">3 workdays</option>
-          </select>
-          <input className={inputClass} name="extra_hours" type="number" min="0" step="0.5" placeholder="Extra hours (optional)" />
-          <input className={inputClass} name="notes" placeholder="Notes (optional)" />
-        </div>
-        <button className={`${btnPrimaryClass} mt-3`} disabled={manual.isPending}>
-          {manual.isPending ? "Saving..." : "Save Attendance"}
-        </button>
-      </form>
     </section>
   );
 }
@@ -1227,27 +1222,20 @@ export function WorkerAttendanceHistoryPage({ workerId }: { workerId: number }) 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="border-b border-gray-100 px-4 py-3">
           <h2 className="text-base font-semibold text-coal">Attendance History</h2>
-          <p className="text-xs text-gray-500">All punch records with status and approval</p>
+          <p className="text-xs text-gray-500">Workday marks and site for each record</p>
         </div>
         <DataTable>
           <DataTableHead>
             <tr>
               <th className="px-4 py-2.5">Date</th>
-              <th className="px-4 py-2.5">Punch In</th>
-              <th className="px-4 py-2.5">Punch Out</th>
-              <th className="px-4 py-2.5">Mark</th>
-              <th className="px-4 py-2.5">Hours</th>
-              <th className="px-4 py-2.5">Extra Hrs</th>
+              <th className="px-4 py-2.5">Workday</th>
               <th className="px-4 py-2.5">Project</th>
-              <th className="px-4 py-2.5">Approval</th>
             </tr>
           </DataTableHead>
           <DataTableBody>
             {recordsPage.pageRows.map((record, i) => (
               <DataTableRow key={record.id} zebra={i % 2 === 1}>
                 <DataTableCell className="font-medium text-gray-900">{formatDate(record.punch_in_at)}</DataTableCell>
-                <DataTableCell>{record.punch_in_at ? new Date(record.punch_in_at).toLocaleTimeString("en-IN", { timeStyle: "short" }) : "—"}</DataTableCell>
-                <DataTableCell>{record.punch_out_at ? new Date(record.punch_out_at).toLocaleTimeString("en-IN", { timeStyle: "short" }) : "—"}</DataTableCell>
                 <DataTableCell>
                   <Badge tone={markTone(record.attendance_mark, Number(record.workday_value))}>
                     {record.workday_value != null
@@ -1257,12 +1245,7 @@ export function WorkerAttendanceHistoryPage({ workerId }: { workerId: number }) 
                       : record.attendance_mark || "PRESENT"}
                   </Badge>
                 </DataTableCell>
-                <DataTableCell>{record.working_hours}h</DataTableCell>
-                <DataTableCell>{record.extra_hours ? `${record.extra_hours}h` : "—"}</DataTableCell>
                 <DataTableCell>{record.project_name || "—"}</DataTableCell>
-                <DataTableCell>
-                  <Badge tone={approvalTone(record.approval_status)}>{record.approval_status}</Badge>
-                </DataTableCell>
               </DataTableRow>
             ))}
           </DataTableBody>
@@ -1452,7 +1435,7 @@ export function BulkAttendancePage() {
           <h3 className="font-black text-coal">Attendance Details</h3>
           <div className="mt-4 grid gap-4">
             <select className={inputClass} name="project" defaultValue="">
-              <option value="">No project</option>
+              <option value="">No site (optional)</option>
               {projectList.map((project) => (
                 <option key={project.id} value={project.id}>
                   {project.code} - {project.name}
@@ -1505,11 +1488,6 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
     queryFn: () => api.attendance({ labourId: supervisorId }),
   });
 
-  const projects = useQuery({
-    queryKey: ["projects"],
-    queryFn: api.projects,
-  });
-
   const manual = useMutation({
     mutationFn: api.manualAttendance,
     onSuccess: () => {
@@ -1556,11 +1534,13 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
   const stats = summary.data.attendance_stats;
   const records = attendance.data?.results ?? [];
   const assignedProjects = profile.assigned_projects ?? [];
-  const projectList = projects.data?.results ?? [];
   const salaryProfile = summary.data.salary_profile;
   const monthPresentDays = monthly.data?.present_days ?? 0;
   const monthAbsentDays = monthly.data?.absent_days ?? 0;
   const formatDayCount = (value: number) => (Number.isInteger(value) ? String(value) : value.toFixed(1));
+  const assignedSiteLabel = assignedProjects.length
+    ? assignedProjects.map((p) => (p.code ? `${p.code} · ${p.name}` : p.name)).join(" | ")
+    : null;
 
   return (
     <section className="space-y-4">
@@ -1598,13 +1578,14 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
             <div className="rounded-md bg-gray-50 p-3"><p className="text-[10px] font-bold uppercase text-gray-500">Working Hours</p><p className="font-bold">{stats.total_working_hours}h</p></div>
           </div>
           <div className="mt-4 rounded-lg border border-gray-100 bg-gray-50/80 p-3">
-            <p className="text-[10px] font-bold uppercase text-gray-500">Assigned Projects</p>
-            {assignedProjects.length ? (
-              <p className="mt-1 text-sm text-coal">{assignedProjects.map((p) => `${p.code} · ${p.name}`).join(" | ")}</p>
+            <p className="text-[10px] font-bold uppercase text-gray-500">Current site</p>
+            {assignedSiteLabel ? (
+              <p className="mt-1 text-sm text-coal">{assignedSiteLabel}</p>
             ) : (
-              <p className="mt-1 text-sm text-amber-700">No project assigned</p>
+              <p className="mt-1 text-sm text-amber-700">No site assigned</p>
             )}
           </div>
+          <SiteAssignmentHistoryPanel rows={summary.data.site_assignment_history} />
         </div>
         <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
           <CompactCalendar
@@ -1632,18 +1613,22 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
       <form onSubmit={submitManual} className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
         <h3 className="text-sm font-semibold text-coal">Mark Attendance</h3>
         <div className="mt-4 grid gap-4 md:grid-cols-3">
-          <select
-            className={inputClass}
-            name="project"
-            defaultValue={assignedProjects.length === 1 ? String(assignedProjects[0].id) : ""}
-          >
-            <option value="">No project</option>
-            {projectList.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.code} - {project.name}
-              </option>
-            ))}
-          </select>
+          {assignedProjects.length === 1 ? (
+            <input type="hidden" name="project" value={assignedProjects[0].id} />
+          ) : null}
+          {assignedProjects.length > 1 ? (
+            <select className={inputClass} name="project" defaultValue={String(assignedProjects[0].id)} required>
+              {assignedProjects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.code ? `${project.code} - ${project.name}` : project.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className={`${inputClass} flex items-center text-gray-600`}>
+              {assignedSiteLabel || "No site assigned"}
+            </div>
+          )}
           <input className={inputClass} name="date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} />
           <input className={inputClass} name="punch_in_time" type="time" />
           <input className={inputClass} name="punch_out_time" type="time" />

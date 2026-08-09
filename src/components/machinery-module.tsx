@@ -22,7 +22,7 @@ import {
 } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useTablePage } from "@/lib/pagination";
-import type { FuelLog, Machinery, MachineryDocument, MachineryMaintenance, MachineryUsage } from "@/lib/types";
+import type { FuelLog, LabourProfile, Machinery, MachineryDocument, MachineryMaintenance, MachineryUsage } from "@/lib/types";
 
 function formatCurrency(value?: string | number | null) {
   const amount = Number(value ?? 0);
@@ -74,6 +74,7 @@ function machineryPayloadFromForm(form: FormData) {
     vehicle_class: formValue(form, "vehicle_class"),
     chassis_number: formValue(form, "chassis_number"),
     engine_number: formValue(form, "engine_number"),
+    driver: formValue(form, "driver") ? Number(formValue(form, "driver")) : null,
     insurance_provider: formValue(form, "insurance_provider"),
     insurance_policy_number: formValue(form, "insurance_policy_number"),
     insurance_start_date: formValue(form, "insurance_start_date"),
@@ -93,20 +94,30 @@ function machineryPayloadFromForm(form: FormData) {
   };
 }
 
-function MachineryEditFields({ item }: { item: Machinery }) {
+function MachineryEditFields({ item, drivers }: { item: Machinery; drivers: LabourProfile[] }) {
   return (
     <>
       <FormRow label="Machine name">
         <input className={inputClass} name="name" required defaultValue={item.name} />
       </FormRow>
       <FormRow label="Type">
-        <input className={inputClass} name="machine_type" required defaultValue={item.machine_type} placeholder="Excavator, Truck, Crane..." />
+        <input className={inputClass} name="machine_type" defaultValue={item.machine_type} placeholder="Excavator, Truck, Crane..." />
+      </FormRow>
+      <FormRow label="Driver">
+        <select className={inputClass} name="driver" defaultValue={item.driver ? String(item.driver) : ""}>
+          <option value="">No driver assigned</option>
+          {drivers.map((driver) => (
+            <option key={driver.id} value={driver.user_id}>
+              {driver.full_name}
+            </option>
+          ))}
+        </select>
       </FormRow>
       <FormRow label="Vehicle number">
         <input className={inputClass} name="vehicle_number" defaultValue={item.vehicle_number || ""} placeholder="MH-12-AB-1234" />
       </FormRow>
       <FormRow label="Registration number">
-        <input className={inputClass} name="registration_number" required defaultValue={item.registration_number} />
+        <input className={inputClass} name="registration_number" defaultValue={item.registration_number} placeholder="Auto-generated if empty" />
       </FormRow>
       <FormRow label="Vehicle class">
         <input className={inputClass} name="vehicle_class" defaultValue={item.vehicle_class || ""} placeholder="LMV, HMV, Trailer..." />
@@ -198,6 +209,12 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
   const machinery = useQuery({
     queryKey: ["machinery", machineryId],
     queryFn: () => api.machineryItem(machineryId),
+  });
+
+  const drivers = useQuery({
+    queryKey: ["labour-workers", "drivers"],
+    queryFn: () => api.labourWorkers({ designation: "DRIVER", page_size: 200, ordering: "user__first_name" }),
+    retry: false,
   });
 
   const maintenance = useQuery({
@@ -328,6 +345,7 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-600">Machinery</p>
             <h1 className="mt-1 text-lg font-semibold text-coal">{item.name}</h1>
             <p className="text-sm text-gray-500">{item.machine_type}</p>
+            {item.driver_name ? <p className="mt-1 text-sm text-gray-600">Driver: {item.driver_name}</p> : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={item.active ? "green" : "gray"}>{item.active ? "Active" : "Inactive"}</Badge>
@@ -358,6 +376,10 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
         </div>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-lg bg-gray-50 p-3">
+            <p className="text-[10px] font-bold uppercase text-gray-500">Driver</p>
+            <p className="mt-1 font-semibold">{item.driver_name || "—"}</p>
+          </div>
           <div className="rounded-lg bg-gray-50 p-3">
             <p className="text-[10px] font-bold uppercase text-gray-500">Vehicle No.</p>
             <p className="mt-1 font-semibold">{item.vehicle_number || item.registration_number || "—"}</p>
@@ -569,7 +591,7 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
             updateMachinery.mutate(machineryPayloadFromForm(new FormData(event.currentTarget)));
           }}
         >
-          <MachineryEditFields key={item.id + String(editOpen)} item={item} />
+          <MachineryEditFields key={item.id + String(editOpen)} item={item} drivers={drivers.data?.results ?? []} />
         </form>
       </Modal>
     </section>

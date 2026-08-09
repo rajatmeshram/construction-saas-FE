@@ -14,7 +14,6 @@ import {
   FolderPlus,
   HardHat,
   History,
-  ListTodo,
   LogOut,
   Pencil,
   Package,
@@ -27,6 +26,8 @@ import {
   Users,
   Wrench,
   Download,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -71,6 +72,7 @@ import type {
   DashboardMetrics,
   Expense,
   FuelLog,
+  LabourProfile,
   Machinery,
   Material,
   MaterialStock,
@@ -79,7 +81,6 @@ import type {
   OperationsReport,
   Project,
   ProjectDocument,
-  ProjectTask,
   UserMini,
   Vendor,
 } from "@/lib/types";
@@ -661,22 +662,6 @@ function statusBadgeClass(status: string) {
   return map[status] ?? "bg-gray-100 text-gray-700";
 }
 
-const taskStatusBadgeClass = (status: string) =>
-  `rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${statusBadgeClass(status)}`;
-
-function resolveTaskLabours(task: ProjectTask, projectLabours: UserMini[], allLabours: UserMini[]): UserMini[] {
-  if (task.assigned_labour_details?.length) {
-    return task.assigned_labour_details;
-  }
-  const pool = new Map<number, UserMini>();
-  for (const labour of [...projectLabours, ...allLabours]) {
-    pool.set(labour.id, labour);
-  }
-  return (task.assigned_labours ?? [])
-    .map((id) => pool.get(id))
-    .filter((labour): labour is UserMini => Boolean(labour));
-}
-
 function LabourCheckboxList({
   labours,
   selected,
@@ -721,9 +706,6 @@ function ProjectDetail({
 }) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
-  const [taskLabours, setTaskLabours] = useState<number[]>([]);
-  const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
-  const [editTaskLabours, setEditTaskLabours] = useState<number[]>([]);
   const [projectLabourIds, setProjectLabourIds] = useState<number[]>([]);
   const [projectSupervisorIds, setProjectSupervisorIds] = useState<number[]>([]);
   const [teamSyncKey, setTeamSyncKey] = useState("");
@@ -733,10 +715,6 @@ function ProjectDetail({
   const project = useQuery<Project>({
     queryKey: ["project", projectId],
     queryFn: () => api.project(projectId),
-  });
-  const tasks = useQuery<Paginated<ProjectTask>>({
-    queryKey: ["tasks", projectId],
-    queryFn: () => api.tasks(projectId),
   });
   const documents = useQuery<Paginated<ProjectDocument>>({
     queryKey: ["project-documents", projectId],
@@ -751,12 +729,6 @@ function ProjectDetail({
   const machineryUsage = useQuery<Paginated<MachineryUsage>>({
     queryKey: ["machinery-usage", projectId],
     queryFn: () => api.machineryUsage({ projectId }),
-    retry: false,
-  });
-  const materials = useQuery<Paginated<Material>>({
-    queryKey: ["materials"],
-    queryFn: api.materials,
-    enabled: canManage,
     retry: false,
   });
   const projectAttendance = useQuery<Paginated<AttendanceRecord>>({
@@ -776,46 +748,6 @@ function ProjectDetail({
     queryFn: api.supervisors,
     enabled: canManage && user?.role === "SUPER_ADMIN",
     retry: false,
-  });
-
-  const createTask = useMutation({
-    mutationFn: (payload: Parameters<typeof api.createTask>[0]) => api.createTask(payload),
-    onSuccess: () => {
-      setMessage("Task created.");
-      setTaskLabours([]);
-      queryClient.invalidateQueries({ queryKey: ["tasks", projectId] });
-    },
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Task creation failed."),
-  });
-
-  const updateTask = useMutation({
-    mutationFn: ({ id, payload }: { id: number; payload: Partial<Parameters<typeof api.createTask>[0]> }) =>
-      api.updateTask(id, payload),
-    onSuccess: () => {
-      setMessage("Task updated.");
-      setEditingTask(null);
-      setEditTaskLabours([]);
-      queryClient.invalidateQueries({ queryKey: ["tasks", projectId] });
-    },
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Task update failed."),
-  });
-
-  const deleteTask = useMutation({
-    mutationFn: (id: number) => api.deleteTask(id),
-    onSuccess: () => {
-      setMessage("Task deleted.");
-      queryClient.invalidateQueries({ queryKey: ["tasks", projectId] });
-    },
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Delete failed."),
-  });
-
-  const addTaskMaterial = useMutation({
-    mutationFn: (payload: Parameters<typeof api.createTaskMaterial>[0]) => api.createTaskMaterial(payload),
-    onSuccess: () => {
-      setMessage("Material added to task.");
-      queryClient.invalidateQueries({ queryKey: ["tasks", projectId] });
-    },
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Failed to add material."),
   });
 
   const uploadDocument = useMutation({
@@ -846,60 +778,6 @@ function ProjectDetail({
     onError: (err) => setMessage(err instanceof Error ? err.message : "Failed to update team."),
   });
 
-  function submitTask(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    createTask.mutate({
-      project: projectId,
-      title: formValue(form, "title"),
-      description: formValue(form, "description"),
-      status: formValue(form, "status") as ProjectTask["status"],
-      priority: formValue(form, "priority") as ProjectTask["priority"],
-      estimated_hours: formValue(form, "estimated_hours") || undefined,
-      start_date: formValue(form, "start_date") || undefined,
-      due_date: formValue(form, "due_date") || undefined,
-      assigned_labours: taskLabours,
-    });
-    event.currentTarget.reset();
-    setTaskLabours([]);
-  }
-
-  function submitTaskMaterial(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    addTaskMaterial.mutate({
-      task: Number(form.get("task")),
-      material: Number(form.get("material")),
-      quantity: formValue(form, "quantity"),
-      notes: formValue(form, "notes"),
-    });
-    event.currentTarget.reset();
-  }
-
-  function submitEditTask(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!editingTask) return;
-    const form = new FormData(event.currentTarget);
-    updateTask.mutate({
-      id: editingTask.id,
-      payload: {
-        title: formValue(form, "title"),
-        description: formValue(form, "description"),
-        status: formValue(form, "status") as ProjectTask["status"],
-        priority: formValue(form, "priority") as ProjectTask["priority"],
-        estimated_hours: formValue(form, "estimated_hours") || undefined,
-        start_date: formValue(form, "start_date") || undefined,
-        due_date: formValue(form, "due_date") || undefined,
-        assigned_labours: editTaskLabours,
-      },
-    });
-  }
-
-  function startEditTask(task: ProjectTask) {
-    setEditingTask(task);
-    setEditTaskLabours(task.assigned_labours ?? []);
-  }
-
   function submitDocument(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -918,11 +796,9 @@ function ProjectDetail({
   }
 
   const p = project.data;
-  const taskList = tasks.data?.results ?? [];
   const stockRows = (materialStock.data?.results ?? []).filter((row) => row.project === projectId);
   const usageRows = machineryUsage.data?.results ?? [];
   const documentList = documents.data?.results ?? [];
-  const materialList = materials.data?.results ?? [];
   const allLabourOptions: UserMini[] = (allLabours.data ?? []).map((labour) => ({
     id: labour.id,
     username: labour.username,
@@ -937,8 +813,17 @@ function ProjectDetail({
     role: supervisor.role,
     mobile_number: supervisor.mobile_number,
   }));
+  const supervisorOtherSiteById = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const supervisor of allSupervisors.data ?? []) {
+      const other = (supervisor.assigned_projects ?? []).find((item) => item.id !== projectId);
+      if (other) {
+        map.set(supervisor.id, other.code ? `${other.code} · ${other.name}` : other.name);
+      }
+    }
+    return map;
+  }, [allSupervisors.data, projectId]);
   const projectLabours = allLabourOptions.filter((labour) => projectLabourIds.includes(labour.id));
-  const taskLabourPool = projectLabours;
   const attendanceRows = projectAttendance.data?.results ?? [];
   const liveAttendance = attendanceRows.filter((row) => row.status === "PUNCHED_IN");
 
@@ -949,11 +834,13 @@ function ProjectDetail({
   const nextTeamSyncKey = project.data
     ? `${project.data.id}:${(project.data.labours ?? []).join(",")}:${(project.data.supervisors ?? []).join(",")}`
     : "";
-  if (nextTeamSyncKey && nextTeamSyncKey !== teamSyncKey) {
+
+  useEffect(() => {
+    if (!nextTeamSyncKey || nextTeamSyncKey === teamSyncKey) return;
     setTeamSyncKey(nextTeamSyncKey);
     setProjectLabourIds(project.data?.labours ?? []);
-    setProjectSupervisorIds(project.data?.supervisors ?? []);
-  }
+    setProjectSupervisorIds((project.data?.supervisors ?? []).slice(0, 1));
+  }, [nextTeamSyncKey, teamSyncKey, project.data?.labours, project.data?.supervisors]);
 
   if (project.isLoading) {
     return <p className="rounded-lg border border-gray-200/80 bg-white p-4 text-gray-500 shadow-sm">Loading project...</p>;
@@ -969,11 +856,15 @@ function ProjectDetail({
       : { label: "Off site", tone: "gray" as const };
   }
 
+  const siteMeta = [p.client_name, p.location].filter(Boolean).join(" · ");
+  const timelineLabel =
+    p.start_date || p.end_date ? `${p.start_date || "—"} → ${p.end_date || "—"}` : "—";
+
   return (
     <section className="space-y-5">
       <Link href="/projects" className={`${btnSecondaryClass} text-sm`}>
         <ArrowLeft className="h-4 w-4" />
-        Back to projects
+        Back to sites
       </Link>
 
       {message && <PageMessage>{message}</PageMessage>}
@@ -981,16 +872,16 @@ function ProjectDetail({
       <ContentCard>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-medium text-violet-600">{p.code}</p>
+            {p.code && <p className="text-xs font-medium text-violet-600">{p.code}</p>}
             <h2 className="mt-1 text-2xl font-semibold text-gray-900">{p.name}</h2>
-            <p className="mt-1 text-sm text-gray-500">{p.client_name} · {p.location}</p>
+            {siteMeta && <p className="mt-1 text-sm text-gray-500">{siteMeta}</p>}
           </div>
           <Badge tone={p.status === "ACTIVE" ? "green" : "gray"}>{p.status.replace("_", " ")}</Badge>
         </div>
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-lg bg-gray-50 px-3 py-2.5">
             <p className="text-xs text-gray-500">Timeline</p>
-            <p className="mt-0.5 text-sm font-medium text-gray-900">{p.start_date} → {p.end_date}</p>
+            <p className="mt-0.5 text-sm font-medium text-gray-900">{timelineLabel}</p>
           </div>
           <div className="rounded-lg bg-gray-50 px-3 py-2.5">
             <p className="text-xs text-gray-500">Budget</p>
@@ -1000,12 +891,6 @@ function ProjectDetail({
           <div className="rounded-lg bg-gray-50 px-3 py-2.5">
             <p className="text-xs text-gray-500">Actual cost</p>
             <p className="mt-0.5 text-sm font-medium text-gray-900">{formatCurrency(p.actual_cost)}</p>
-          </div>
-          <div className="rounded-lg bg-gray-50 px-3 py-2.5">
-            <p className="text-xs text-gray-500">Tasks</p>
-            <p className="mt-0.5 text-sm font-medium text-gray-900">
-              {taskList.filter((t) => t.status === "COMPLETED").length}/{taskList.length} done
-            </p>
           </div>
         </div>
         {p.description && <p className="mt-4 text-sm text-gray-600">{p.description}</p>}
@@ -1021,7 +906,9 @@ function ProjectDetail({
               onClick={() =>
                 updateProjectTeam.mutate({
                   labours: projectLabourIds,
-                  ...(user?.role === "SUPER_ADMIN" ? { supervisors: projectSupervisorIds } : {}),
+                  ...(user?.role === "SUPER_ADMIN"
+                    ? { supervisors: projectSupervisorIds.slice(0, 1) }
+                    : {}),
                 })
               }
               disabled={updateProjectTeam.isPending}
@@ -1046,13 +933,23 @@ function ProjectDetail({
           {(user?.role === "SUPER_ADMIN" || !canManage) && (
             <div>
               <SubsectionTitle>Supervisors</SubsectionTitle>
+              <p className="mt-1 text-xs text-gray-500">
+                Only one supervisor per site. Uncheck the current one to choose someone else. A supervisor can also only
+                belong to one site at a time.
+              </p>
               <div className="mt-2">
                 {canManage && user?.role === "SUPER_ADMIN" ? (
                   <MemberPicker
                     members={allSupervisorOptions}
-                    selected={projectSupervisorIds}
-                    onChange={setProjectSupervisorIds}
+                    selected={projectSupervisorIds.slice(0, 1)}
+                    onChange={(ids) => setProjectSupervisorIds(ids.slice(0, 1))}
+                    maxSelected={1}
                     emptyMessage="No supervisors found. Add them under Employee."
+                    getBadge={(id) => {
+                      const other = supervisorOtherSiteById.get(id);
+                      if (!other || projectSupervisorIds.includes(id)) return null;
+                      return { label: `On ${other}`, tone: "amber" };
+                    }}
                   />
                 ) : (
                   <MemberList
@@ -1071,7 +968,7 @@ function ProjectDetail({
 
           <div>
             <SubsectionTitle>Employees</SubsectionTitle>
-            <p className="mt-1 text-xs text-gray-500">Selected workers can be assigned to tasks below.</p>
+            <p className="mt-1 text-xs text-gray-500">Workers assigned to this site.</p>
             <div className="mt-2">
               {canManage ? (
                 <MemberPicker
@@ -1091,236 +988,6 @@ function ProjectDetail({
             </div>
           </div>
         </div>
-      </ContentCard>
-
-      <ContentCard title="Tasks" subtitle="Work items and employee assignments for this project">
-        {canManage && (
-          <form onSubmit={submitTask} className="mb-5 rounded-lg border border-gray-100 bg-gray-50/80 p-4">
-            <SubsectionTitle>Add task</SubsectionTitle>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <Field label="Task title">
-                <input className={inputClass} name="title" required />
-              </Field>
-              <Field label="Estimated hours">
-                <input className={inputClass} name="estimated_hours" min="0" step="0.5" type="number" />
-              </Field>
-              <Field label="Status">
-                <select className={inputClass} name="status" defaultValue="PENDING">
-                  {["PENDING", "IN_PROGRESS", "COMPLETED", "BLOCKED"].map((status) => (
-                    <option key={status} value={status}>{status.replace("_", " ")}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Priority">
-                <select className={inputClass} name="priority" defaultValue="MEDIUM">
-                  {["LOW", "MEDIUM", "HIGH", "URGENT"].map((priority) => (
-                    <option key={priority} value={priority}>{priority}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Start date">
-                <input className={inputClass} name="start_date" type="date" />
-              </Field>
-              <Field label="Due date">
-                <input className={inputClass} name="due_date" type="date" />
-              </Field>
-              <div className="md:col-span-2">
-                <Field label="Assign workers">
-                  <LabourCheckboxList labours={taskLabourPool} selected={taskLabours} onChange={setTaskLabours} />
-                </Field>
-              </div>
-              <div className="md:col-span-2">
-                <Field label="Description">
-                  <textarea className={inputClass} name="description" rows={2} />
-                </Field>
-              </div>
-            </div>
-            <button className={`${btnPrimaryClass} mt-3`} disabled={createTask.isPending}>
-              {createTask.isPending ? "Adding..." : "Add task"}
-            </button>
-          </form>
-        )}
-
-        <div className="space-y-2">
-          {taskList.map((task) => {
-            const taskLabourList = resolveTaskLabours(task, projectLabours, allLabourOptions);
-            const isEditing = editingTask?.id === task.id;
-
-            if (isEditing) {
-              return (
-                <form key={task.id} onSubmit={submitEditTask} className="rounded-lg border border-violet-200 bg-violet-50/40 p-4">
-                  <SubsectionTitle>Edit task</SubsectionTitle>
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    <Field label="Task title">
-                      <input className={inputClass} name="title" defaultValue={task.title} required />
-                    </Field>
-                    <Field label="Estimated hours">
-                      <input
-                        className={inputClass}
-                        name="estimated_hours"
-                        min="0"
-                        step="0.5"
-                        type="number"
-                        defaultValue={task.estimated_hours ?? ""}
-                      />
-                    </Field>
-                    <Field label="Status">
-                      <select className={inputClass} name="status" defaultValue={task.status}>
-                        {["PENDING", "IN_PROGRESS", "COMPLETED", "BLOCKED"].map((status) => (
-                          <option key={status} value={status}>{status.replace("_", " ")}</option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label="Priority">
-                      <select className={inputClass} name="priority" defaultValue={task.priority}>
-                        {["LOW", "MEDIUM", "HIGH", "URGENT"].map((priority) => (
-                          <option key={priority} value={priority}>{priority}</option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label="Start date">
-                      <input className={inputClass} name="start_date" type="date" defaultValue={task.start_date ?? ""} />
-                    </Field>
-                    <Field label="Due date">
-                      <input className={inputClass} name="due_date" type="date" defaultValue={task.due_date ?? ""} />
-                    </Field>
-                    <div className="md:col-span-2">
-                      <Field label="Description">
-                        <textarea className={inputClass} name="description" rows={2} defaultValue={task.description} />
-                      </Field>
-                    </div>
-                    <div className="md:col-span-2">
-                      <Field label="Assign employees">
-                        <LabourCheckboxList
-                          labours={taskLabourPool}
-                          selected={editTaskLabours}
-                          onChange={setEditTaskLabours}
-                        />
-                      </Field>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button type="submit" className={btnPrimaryClass} disabled={updateTask.isPending}>
-                      {updateTask.isPending ? "Saving..." : "Save"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingTask(null);
-                        setEditTaskLabours([]);
-                      }}
-                      className={btnSecondaryClass}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              );
-            }
-
-            return (
-            <div key={task.id} className="rounded-lg border border-gray-100 bg-white p-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{task.title}</p>
-                  {task.description && <p className="mt-1 text-xs text-gray-500">{task.description}</p>}
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <Badge tone={task.status === "COMPLETED" ? "green" : task.status === "BLOCKED" ? "red" : "amber"}>
-                    {task.status.replace("_", " ")}
-                  </Badge>
-                  {task.estimated_hours && (
-                    <Badge tone="gray">{task.estimated_hours}h</Badge>
-                  )}
-                </div>
-              </div>
-              <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
-                <span>Priority: {task.priority}</span>
-                {task.start_date && <span>Start: {task.start_date}</span>}
-                {task.due_date && <span>Due: {task.due_date}</span>}
-              </div>
-              <div className="mt-2 flex flex-wrap gap-1">
-                {taskLabourList.length > 0 ? (
-                  taskLabourList.map((labour) => (
-                    <Badge key={labour.id} tone="violet">{labour.full_name || labour.username}</Badge>
-                  ))
-                ) : (
-                  <span className="text-xs text-gray-400">No workers assigned</span>
-                )}
-              </div>
-              {(task.materials ?? []).length > 0 && (
-                <div className="mt-2 rounded-lg border border-gray-100 bg-gray-50/80 px-3 py-2">
-                  <p className="text-xs font-medium text-gray-500">Materials</p>
-                  <div className="mt-1 space-y-0.5">
-                    {task.materials!.map((item) => (
-                      <p key={item.id} className="text-xs text-gray-600">
-                        {item.material_name}: {item.quantity} {item.material_unit}
-                        {item.notes ? ` · ${item.notes}` : ""}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {canManage && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => startEditTask(task)}
-                    className={`${btnSecondaryClass} px-3 py-1 text-xs`}
-                  >
-                    <Pencil className="h-3 w-3" />
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (window.confirm(`Delete task "${task.title}"?`)) {
-                        deleteTask.mutate(task.id);
-                      }
-                    }}
-                    disabled={deleteTask.isPending}
-                    className="rounded-lg bg-red-50 px-3 py-1 text-xs font-medium text-red-700 disabled:opacity-50"
-                  >
-                    Delete
-                  </button>
-                </div>
-              )}
-            </div>
-            );
-          })}
-          {!taskList.length && <p className="text-sm text-gray-500">No tasks yet. Add tasks to track work on this project.</p>}
-        </div>
-
-        {canManage && taskList.length > 0 && materialList.length > 0 && (
-          <form onSubmit={submitTaskMaterial} className="mt-4 rounded-lg border border-dashed border-gray-200 bg-gray-50/50 p-4">
-            <SubsectionTitle>Add material to task</SubsectionTitle>
-            <div className="mt-3 grid gap-3 md:grid-cols-4">
-              <Field label="Task">
-                <select className={inputClass} name="task" required>
-                  {taskList.map((task) => (
-                    <option key={task.id} value={task.id}>{task.title}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Material">
-                <select className={inputClass} name="material" required>
-                  {materialList.map((material) => (
-                    <option key={material.id} value={material.id}>{material.name} ({material.unit})</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Quantity">
-                <input className={inputClass} name="quantity" min="0" step="0.01" type="number" required />
-              </Field>
-              <Field label="Notes">
-                <input className={inputClass} name="notes" />
-              </Field>
-            </div>
-            <button className={`${btnPrimaryClass} mt-3`} disabled={addTaskMaterial.isPending}>
-              Add material
-            </button>
-          </form>
-        )}
       </ContentCard>
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -1450,6 +1117,7 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
   const [message, setMessage] = useState("");
   const [supervisors, setSupervisors] = useState<number[]>([]);
   const [labours, setLabours] = useState<number[]>([]);
+  const [editingSite, setEditingSite] = useState<Project | null>(null);
   const projects = useQuery<Paginated<Project>>({ queryKey: ["projects"], queryFn: api.projects });
   const users = useQuery<Paginated<AuthUser>>({
     queryKey: ["users"],
@@ -1473,32 +1141,109 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
   const createProject = useMutation({
     mutationFn: (payload: Parameters<typeof api.createProject>[0]) => api.createProject(payload),
     onSuccess: () => {
-      setMessage("Project created successfully.");
+      setMessage("Site created successfully.");
       setSupervisors([]);
       setLabours([]);
+      setEditingSite(null);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Project creation failed."),
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Site creation failed."),
   });
+
+  const updateSite = useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: number;
+      payload: Parameters<typeof api.updateProject>[1];
+    }) => api.updateProject(id, payload),
+    onSuccess: () => {
+      setMessage("Site updated successfully.");
+      setSupervisors([]);
+      setLabours([]);
+      setEditingSite(null);
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["project"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Site update failed."),
+  });
+
+  const deleteSite = useMutation({
+    mutationFn: (id: number) => api.deleteProject(id),
+    onSuccess: () => {
+      setMessage("Site deleted.");
+      if (editingSite) {
+        setEditingSite(null);
+        setSupervisors([]);
+        setLabours([]);
+      }
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: (err) =>
+      setMessage(
+        err instanceof Error
+          ? err.message
+          : "Could not delete site. It may have attendance or other linked records.",
+      ),
+  });
+
+  function startEdit(site: Project) {
+    setEditingSite(site);
+    setSupervisors((site.supervisors ?? []).slice(0, 1));
+    setLabours([...(site.labours ?? [])]);
+    setMessage("");
+  }
+
+  function cancelEdit() {
+    setEditingSite(null);
+    setSupervisors([]);
+    setLabours([]);
+  }
 
   function submitProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    createProject.mutate({
-      name: String(form.get("name") ?? ""),
-      code: String(form.get("code") ?? ""),
-      client_name: String(form.get("client_name") ?? ""),
-      location: String(form.get("location") ?? ""),
-      start_date: String(form.get("start_date") ?? ""),
-      end_date: String(form.get("end_date") ?? ""),
-      estimated_budget: String(form.get("estimated_budget") ?? "0"),
+    const startDate = String(form.get("start_date") ?? "").trim();
+    const endDate = String(form.get("end_date") ?? "").trim();
+    const budget = String(form.get("estimated_budget") ?? "").trim();
+    const payload = {
+      name: String(form.get("name") ?? "").trim(),
+      code: String(form.get("code") ?? "").trim(),
+      client_name: String(form.get("client_name") ?? "").trim(),
+      location: String(form.get("location") ?? "").trim(),
+      start_date: startDate || null,
+      end_date: endDate || null,
+      estimated_budget: budget || "0",
       status: String(form.get("status") ?? "ACTIVE") as Project["status"],
       description: String(form.get("description") ?? ""),
-      supervisors,
+      supervisors: supervisors.slice(0, 1),
       labours,
-    });
+    };
+    if (!payload.name) {
+      setMessage("Site name is required.");
+      return;
+    }
+    if (editingSite) {
+      updateSite.mutate({ id: editingSite.id, payload });
+      return;
+    }
+    createProject.mutate(payload);
     event.currentTarget.reset();
+  }
+
+  function confirmDelete(site: Project) {
+    if (
+      !window.confirm(
+        `Delete site "${site.name}" (${site.code})? This cannot be undone if the site has no protected records.`,
+      )
+    ) {
+      return;
+    }
+    deleteSite.mutate(site.id);
   }
 
   const userList = users.data?.results ?? [];
@@ -1513,38 +1258,53 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
     }),
   );
   const projectList = projects.data?.results ?? [];
+  const formBusy = createProject.isPending || updateSite.isPending;
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
+  const showSiteForm = isSuperAdmin || Boolean(editingSite);
 
   return (
-    <section className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-      <form onSubmit={submitProject} className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
+    <section className={`grid gap-4 ${showSiteForm ? "xl:grid-cols-[0.9fr_1.1fr]" : ""}`}>
+      {showSiteForm && (
+      <form
+        key={editingSite ? `edit-${editingSite.id}` : "create"}
+        onSubmit={submitProject}
+        className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm"
+      >
         <div className="flex items-center gap-3">
           <FolderPlus className="h-6 w-6 text-safety" />
-          <h2 className="text-base font-semibold text-coal">Create Project</h2>
+          <h2 className="text-base font-semibold text-coal">{editingSite ? "Edit site" : "Create site"}</h2>
         </div>
         <div className="mt-6 grid gap-4 md:grid-cols-2">
-          <Field label="Project name">
-            <input className={inputClass} name="name" required />
+          <Field label="Site name">
+            <input className={inputClass} name="name" required defaultValue={editingSite?.name ?? ""} />
           </Field>
-          <Field label="Project code">
-            <input className={inputClass} name="code" required />
+          <Field label="Site code">
+            <input className={inputClass} name="code" placeholder="Auto-generated if empty" defaultValue={editingSite?.code ?? ""} />
           </Field>
           <Field label="Client name">
-            <input className={inputClass} name="client_name" required />
+            <input className={inputClass} name="client_name" defaultValue={editingSite?.client_name ?? ""} />
           </Field>
           <Field label="Location">
-            <input className={inputClass} name="location" required />
+            <input className={inputClass} name="location" defaultValue={editingSite?.location ?? ""} />
           </Field>
           <Field label="Start date">
-            <input className={inputClass} name="start_date" type="date" required />
+            <input className={inputClass} name="start_date" type="date" defaultValue={editingSite?.start_date ?? ""} />
           </Field>
           <Field label="End date">
-            <input className={inputClass} name="end_date" type="date" required />
+            <input className={inputClass} name="end_date" type="date" defaultValue={editingSite?.end_date ?? ""} />
           </Field>
           <Field label="Estimated budget">
-            <input className={inputClass} name="estimated_budget" min="0" step="0.01" type="number" required />
+            <input
+              className={inputClass}
+              name="estimated_budget"
+              min="0"
+              step="0.01"
+              type="number"
+              defaultValue={editingSite?.estimated_budget ?? ""}
+            />
           </Field>
           <Field label="Status">
-            <select className={inputClass} name="status" defaultValue="ACTIVE">
+            <select className={inputClass} name="status" defaultValue={editingSite?.status ?? "ACTIVE"}>
               {["DRAFT", "PLANNING", "ACTIVE", "ON_HOLD", "COMPLETED", "CANCELLED"].map((status) => (
                 <option key={status} value={status}>
                   {status.replace("_", " ")}
@@ -1553,18 +1313,20 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
             </select>
           </Field>
           {user?.role === "SUPER_ADMIN" && (
-            <Field label="Assign supervisors">
-              <LabourCheckboxList
-                labours={supervisorList.map((item) => ({
+            <Field label="Assign supervisor">
+              <p className="mb-2 text-xs text-gray-500">Only one supervisor per site.</p>
+              <MemberPicker
+                members={supervisorList.map((item) => ({
                   id: item.id,
                   username: item.username,
                   full_name: item.full_name,
                   role: item.role,
                   mobile_number: item.mobile_number,
                 }))}
-                selected={supervisors}
-                onChange={setSupervisors}
-                resourceLabel="supervisor accounts"
+                selected={supervisors.slice(0, 1)}
+                onChange={(ids) => setSupervisors(ids.slice(0, 1))}
+                maxSelected={1}
+                emptyMessage="No supervisors found."
               />
             </Field>
           )}
@@ -1577,33 +1339,85 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
           )}
           <div className="md:col-span-2">
             <Field label="Description">
-              <textarea className={inputClass} name="description" rows={4} />
+              <textarea className={inputClass} name="description" rows={4} defaultValue={editingSite?.description ?? ""} />
             </Field>
           </div>
         </div>
         {message && <p className="mt-4 rounded-2xl bg-safety/15 px-4 py-3 text-sm font-semibold text-coal">{message}</p>}
-        <button className={`${btnPrimaryClass} mt-4`} disabled={createProject.isPending}>
-          {createProject.isPending ? "Creating..." : "Create Project"}
-        </button>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button className={btnPrimaryClass} disabled={formBusy}>
+            {formBusy
+              ? editingSite
+                ? "Saving..."
+                : "Creating..."
+              : editingSite
+                ? "Save site"
+                : "Create site"}
+          </button>
+          {editingSite && (
+            <button type="button" className={btnSecondaryClass} onClick={cancelEdit} disabled={formBusy}>
+              Cancel
+            </button>
+          )}
+        </div>
       </form>
+      )}
 
       <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
-        <h2 className="text-base font-semibold text-coal">Project List</h2>
-        <p className="mt-1 text-sm text-gray-500">Click a project to view tasks, team, materials, and documents.</p>
+        <h2 className="text-base font-semibold text-coal">{isSuperAdmin ? "Site list" : "My site"}</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          {isSuperAdmin
+            ? "Open a site for team and details, or edit/delete here."
+            : "Only your assigned site is shown."}
+        </p>
+        {!showSiteForm && message && (
+          <p className="mt-3 rounded-2xl bg-safety/15 px-4 py-3 text-sm font-semibold text-coal">{message}</p>
+        )}
         <div className="mt-5 space-y-2">
           {projectList.map((project) => (
-            <Link
+            <div
               key={project.id}
-              href={`/projects/${project.id}`}
-              className="flex w-full items-center justify-between gap-4 rounded-2xl border border-gray-100 bg-cement p-4 text-left transition hover:border-safety/40 hover:bg-safety/5"
+              className="flex w-full items-center gap-2 rounded-2xl border border-gray-100 bg-cement p-3 transition hover:border-safety/40 hover:bg-safety/5"
             >
-              <p className="font-semibold text-coal">{project.name}</p>
+              <Link href={`/projects/${project.id}`} className="min-w-0 flex-1 text-left">
+                <p className="font-semibold text-coal">
+                  {project.code ? `${project.code} · ${project.name}` : project.name}
+                </p>
+                <p className="mt-0.5 text-xs text-gray-500">{project.location || "No location"}</p>
+              </Link>
               <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${statusBadgeClass(project.status)}`}>
                 {project.status.replace("_", " ")}
               </span>
-            </Link>
+              {isSuperAdmin && (
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    className={`${btnSecondaryClass} inline-flex items-center gap-1 px-2.5 py-1.5 text-xs`}
+                    onClick={() => startEdit(project)}
+                    title="Edit site"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className={`${btnSecondaryClass} inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-red-700 hover:border-red-200 hover:bg-red-50`}
+                    onClick={() => confirmDelete(project)}
+                    disabled={deleteSite.isPending}
+                    title="Delete site"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete
+                  </button>
+                </div>
+              )}
+            </div>
           ))}
-          {!projectList.length && <p className="rounded-md bg-gray-50 p-5 text-gray-500">No projects created yet.</p>}
+          {!projectList.length && (
+            <p className="rounded-md bg-gray-50 p-5 text-gray-500">
+              {isSuperAdmin ? "No sites created yet." : "No site assigned to you yet."}
+            </p>
+          )}
         </div>
       </div>
     </section>
@@ -2180,6 +1994,52 @@ function AttendanceHistoryPage() {
   );
 }
 
+function localDateIso(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Most recent Tuesday on or before `from` (local). */
+function mostRecentTuesday(from = new Date()) {
+  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  const daysSinceTue = (d.getDay() + 5) % 7; // Sun=0 → 5, Mon=1 → 6, Tue=2 → 0
+  d.setDate(d.getDate() - daysSinceTue);
+  return d;
+}
+
+const PAYROLL_DAY_LABELS = ["Wed", "Thr", "Fri", "Sat", "Sun", "Mon", "Tues"] as const;
+
+function payrollWeekForOffset(weekOffset: number) {
+  const weekEnd = mostRecentTuesday();
+  weekEnd.setDate(weekEnd.getDate() + weekOffset * 7);
+  const weekStart = new Date(weekEnd);
+  weekStart.setDate(weekStart.getDate() - 6);
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const day = new Date(weekStart);
+    day.setDate(weekStart.getDate() + i);
+    return {
+      key: localDateIso(day),
+      label: PAYROLL_DAY_LABELS[i],
+      dateLabel: day.toLocaleDateString("en-GB", { day: "numeric", month: "short" }).replace(" ", "-"),
+    };
+  });
+  return {
+    weekStart: localDateIso(weekStart),
+    weekEnd: localDateIso(weekEnd),
+    rangeLabel: `${days[0].dateLabel} – ${days[6].dateLabel}`,
+    days,
+  };
+}
+
+function formatWeekMark(value?: number) {
+  if (value == null) return "—";
+  if (value === 0) return "A";
+  if (Number.isInteger(value)) return String(value);
+  return String(value);
+}
+
 function AttendanceManager() {
   const queryClient = useQueryClient();
   const hydrated = useAppSelector((state) => state.auth.hydrated);
@@ -2199,6 +2059,17 @@ function AttendanceManager() {
     Array<{ labour_id: number; date?: string; error: string; existing_workday?: number | null }>
   >([]);
   const [markerCoords, setMarkerCoords] = useState<{ latitude?: number; longitude?: number }>({});
+  const [nameFilter, setNameFilter] = useState("");
+  const [designationFilter, setDesignationFilter] = useState("all");
+  const [projectFilter, setProjectFilter] = useState("all");
+  /** 0 = current Wed–Tue payroll week; -1 previous; +1 upcoming */
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [expandedAttendanceId, setExpandedAttendanceId] = useState<number | null>(null);
+  const [allWeekOpen, setAllWeekOpen] = useState(false);
+  const [allWeekNameFilter, setAllWeekNameFilter] = useState("");
+  const [allWeekDesignationFilter, setAllWeekDesignationFilter] = useState("all");
+  const [allWeekProjectFilter, setAllWeekProjectFilter] = useState("all");
+  const [allWeekOffset, setAllWeekOffset] = useState(0);
 
   const workers = useQuery({
     queryKey: ["labour-workers", "attendance-bulk"],
@@ -2212,12 +2083,18 @@ function AttendanceManager() {
     enabled: hydrated && Boolean(accessToken) && isSuperAdmin,
   });
 
+  const projects = useQuery({
+    queryKey: ["projects", "attendance-filters"],
+    queryFn: api.projects,
+    enabled: hydrated && Boolean(accessToken),
+  });
+
   const labourRows = useMemo(() => {
     const workerRows = (workers.data?.results ?? []).map((worker) => ({
       id: worker.user_id,
       full_name: worker.full_name || worker.username,
       mobile_number: worker.mobile_number,
-      designation: worker.designation === "DRIVER" ? "Driver" : "Labour",
+      designation: worker.designation === "DRIVER" ? "Driver" : worker.designation === "OFFICE_STAFF" ? "Office Staff" : "Labour",
       assigned_projects: worker.assigned_projects ?? [],
     }));
     if (!isSuperAdmin) return workerRows;
@@ -2231,8 +2108,132 @@ function AttendanceManager() {
     return [...workerRows, ...supervisorRows].sort((a, b) => a.full_name.localeCompare(b.full_name));
   }, [workers.data?.results, supervisors.data, isSuperAdmin]);
 
-  const allIds = useMemo(() => labourRows.map((row) => row.id), [labourRows]);
-  const workersPage = useTablePage(labourRows, { pageSize: 20 });
+  const projectList = projects.data?.results ?? [];
+
+  const filteredLabourRows = useMemo(() => {
+    const name = nameFilter.trim().toLowerCase();
+    return labourRows.filter((row) => {
+      if (name && !row.full_name.toLowerCase().includes(name) && !(row.mobile_number || "").toLowerCase().includes(name)) {
+        return false;
+      }
+      if (designationFilter !== "all" && row.designation !== designationFilter) {
+        return false;
+      }
+      if (projectFilter === "unassigned") {
+        return row.assigned_projects.length === 0;
+      }
+      if (projectFilter !== "all") {
+        const projectId = Number(projectFilter);
+        return row.assigned_projects.some((project) => project.id === projectId);
+      }
+      return true;
+    });
+  }, [labourRows, nameFilter, designationFilter, projectFilter]);
+
+  const allIds = useMemo(() => filteredLabourRows.map((row) => row.id), [filteredLabourRows]);
+  const workersPage = useTablePage(filteredLabourRows, {
+    pageSize: 20,
+    resetKey: `${nameFilter}-${designationFilter}-${projectFilter}`,
+  });
+
+  const payrollWeek = useMemo(() => payrollWeekForOffset(weekOffset), [weekOffset]);
+  const weekDayKeys = useMemo(() => payrollWeek.days.map((d) => d.key), [payrollWeek.days]);
+  const attendancePopupEmployee = useMemo(
+    () => (expandedAttendanceId == null ? null : labourRows.find((row) => row.id === expandedAttendanceId) ?? null),
+    [expandedAttendanceId, labourRows],
+  );
+
+  const allPayrollWeek = useMemo(() => payrollWeekForOffset(allWeekOffset), [allWeekOffset]);
+  const allWeekDayKeys = useMemo(() => allPayrollWeek.days.map((d) => d.key), [allPayrollWeek.days]);
+
+  const allWeekFilteredRows = useMemo(() => {
+    const name = allWeekNameFilter.trim().toLowerCase();
+    return labourRows.filter((row) => {
+      if (name && !row.full_name.toLowerCase().includes(name) && !(row.mobile_number || "").toLowerCase().includes(name)) {
+        return false;
+      }
+      if (allWeekDesignationFilter !== "all" && row.designation !== allWeekDesignationFilter) {
+        return false;
+      }
+      if (allWeekProjectFilter === "unassigned") {
+        return row.assigned_projects.length === 0;
+      }
+      if (allWeekProjectFilter !== "all") {
+        const projectId = Number(allWeekProjectFilter);
+        return row.assigned_projects.some((project) => project.id === projectId);
+      }
+      return true;
+    });
+  }, [labourRows, allWeekNameFilter, allWeekDesignationFilter, allWeekProjectFilter]);
+
+  const weekAttendance = useQuery({
+    queryKey: ["attendance", "payroll-week", payrollWeek.weekStart, payrollWeek.weekEnd, expandedAttendanceId],
+    queryFn: () =>
+      api.attendance({
+        labourId: expandedAttendanceId!,
+        date_from: payrollWeek.weekStart,
+        date_to: payrollWeek.weekEnd,
+        page_size: 50,
+      }),
+    enabled: hydrated && Boolean(accessToken) && expandedAttendanceId != null,
+  });
+
+  const popupWeekMarks = useMemo(() => {
+    const byDay: Record<string, number> = {};
+    for (const record of weekAttendance.data?.results ?? []) {
+      const dayKey = (record.punch_in_at || "").slice(0, 10);
+      if (!weekDayKeys.includes(dayKey)) continue;
+      const raw = record.workday_value;
+      const value = raw == null || raw === "" ? NaN : Number(raw);
+      if (Number.isNaN(value)) continue;
+      const existing = byDay[dayKey];
+      byDay[dayKey] = existing == null ? value : Math.max(existing, value);
+    }
+    return byDay;
+  }, [weekAttendance.data?.results, weekDayKeys]);
+
+  const allWeekAttendance = useQuery({
+    queryKey: [
+      "attendance",
+      "payroll-week-all",
+      allPayrollWeek.weekStart,
+      allPayrollWeek.weekEnd,
+      allWeekFilteredRows.map((r) => r.id).join(","),
+    ],
+    queryFn: () =>
+      api.attendance({
+        labour_ids: allWeekFilteredRows.map((r) => r.id),
+        date_from: allPayrollWeek.weekStart,
+        date_to: allPayrollWeek.weekEnd,
+        page_size: 2000,
+      }),
+    enabled: hydrated && Boolean(accessToken) && allWeekOpen && allWeekFilteredRows.length > 0,
+  });
+
+  const allWeekMarksByLabour = useMemo(() => {
+    const map = new Map<number, Record<string, number>>();
+    for (const record of allWeekAttendance.data?.results ?? []) {
+      const dayKey = (record.punch_in_at || "").slice(0, 10);
+      if (!allWeekDayKeys.includes(dayKey)) continue;
+      const raw = record.workday_value;
+      const value = raw == null || raw === "" ? NaN : Number(raw);
+      if (Number.isNaN(value)) continue;
+      const byDay = map.get(record.labour) ?? {};
+      const existing = byDay[dayKey];
+      byDay[dayKey] = existing == null ? value : Math.max(existing, value);
+      map.set(record.labour, byDay);
+    }
+    return map;
+  }, [allWeekAttendance.data?.results, allWeekDayKeys]);
+
+  function openAllWeekAttendance() {
+    setAllWeekNameFilter(nameFilter);
+    setAllWeekDesignationFilter(designationFilter);
+    setAllWeekProjectFilter(projectFilter);
+    setAllWeekOffset(0);
+    setExpandedAttendanceId(null);
+    setAllWeekOpen(true);
+  }
 
   const workdayOptions = [
     { value: 0, label: "A", hint: "Absent" },
@@ -2432,192 +2433,235 @@ function AttendanceManager() {
   const saving = bulk.isPending || overwriteBulk.isPending;
 
   return (
-    <section className="space-y-4">
-      <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <Timer className="h-6 w-6 text-safety" />
-            <div>
-              <h2 className="text-base font-semibold text-coal">Employee Attendance</h2>
-              <p className="text-sm text-gray-500">Select dates and employees, choose a workday mark, then save.</p>
-            </div>
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200/80 bg-white px-4 py-2.5 shadow-sm">
+        <div className="flex items-center gap-2.5">
+          <Timer className="h-5 w-5 text-safety" />
+          <div>
+            <h2 className="text-sm font-semibold text-coal">Employee Attendance</h2>
+            <p className="text-xs text-gray-500">Select employees, dates, and workday mark.</p>
           </div>
-          <Link href="/attendance/history" className={btnSecondaryClass}>
-            <History className="h-4 w-4" />
-            View All Records
-          </Link>
         </div>
+        <Link href="/attendance/history" className={`${btnSecondaryClass} py-1.5 text-xs`}>
+          <History className="h-3.5 w-3.5" />
+          View All Records
+        </Link>
       </div>
 
       {message && <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{message}</p>}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold text-coal">Select dates</h3>
-              <p className="text-xs text-gray-500">Click days to select multiple dates.</p>
+      <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1.4fr)_minmax(16rem,0.75fr)]">
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center gap-2 border-b border-gray-100 px-3 py-2">
+            <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1.2fr)_minmax(7.5rem,0.7fr)_minmax(8.5rem,1fr)] items-center gap-2">
+              <input
+                className={`${inputClass} w-full py-1.5 text-sm`}
+                value={nameFilter}
+                onChange={(e) => setNameFilter(e.target.value)}
+                placeholder="Name"
+                aria-label="Filter by name"
+              />
+              <select
+                className={`${inputClass} w-full py-1.5 text-sm`}
+                value={designationFilter}
+                onChange={(e) => setDesignationFilter(e.target.value)}
+                aria-label="Filter by designation"
+              >
+                <option value="all">Designation</option>
+                <option value="Labour">Labour</option>
+                <option value="Driver">Driver</option>
+                <option value="Office Staff">Office Staff</option>
+                {isSuperAdmin ? <option value="Supervisor">Supervisor</option> : null}
+              </select>
+              <select
+                className={`${inputClass} w-full py-1.5 text-sm`}
+                value={projectFilter}
+                onChange={(e) => setProjectFilter(e.target.value)}
+                aria-label="Filter by project"
+              >
+                <option value="all">Project</option>
+                <option value="unassigned">Unassigned</option>
+                {projectList.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.code} · {project.name}
+                  </option>
+                ))}
+              </select>
             </div>
-            <div className="flex items-center gap-2">
-              <button type="button" className={btnSecondaryClass} onClick={() => shiftMonth(-1)}>
-                Prev
-              </button>
-              <p className="min-w-[9rem] text-center text-sm font-semibold text-coal">{monthLabel}</p>
-              <button type="button" className={btnSecondaryClass} onClick={() => shiftMonth(1)}>
-                Next
-              </button>
-            </div>
-          </div>
-          <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase tracking-wide text-gray-500">
-            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-              <div key={day} className="py-1">
-                {day}
-              </div>
-            ))}
-          </div>
-          <div className="grid grid-cols-7 gap-1">
-            {Array.from({ length: startWeekday }).map((_, index) => (
-              <div key={`pad-${index}`} />
-            ))}
-            {Array.from({ length: daysInMonth }).map((_, index) => {
-              const day = index + 1;
-              const key = toDateKey(day);
-              const active = selectedDates.includes(key);
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => toggleDate(day)}
-                  className={`flex h-9 items-center justify-center rounded-md text-sm font-semibold transition ${
-                    active ? "bg-violet-600 text-white" : "bg-gray-50 text-coal hover:bg-violet-50"
-                  }`}
-                >
-                  {day}
-                </button>
-              );
-            })}
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-600">
-            <span className="font-medium">{selectedDates.length} date{selectedDates.length === 1 ? "" : "s"} selected</span>
-            {selectedDates.length > 0 && (
-              <button type="button" className="font-medium text-violet-700 hover:underline" onClick={() => setSelectedDates([])}>
-                Clear dates
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <h3 className="text-sm font-semibold text-coal">Workday</h3>
-          <p className="text-xs text-gray-500">A = Absent · H = 0.5 · P = 1 day · up to 3 days</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {workdayOptions.map((option) => {
-              const active = workdayValue === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  title={option.hint}
-                  onClick={() => setWorkdayValue(option.value)}
-                  className={`inline-flex min-w-12 flex-col items-center rounded-lg border px-3 py-2 text-sm font-bold transition ${
-                    active
-                      ? option.value === 0
-                        ? "border-red-500 bg-red-500 text-white"
-                        : option.value === 0.5
-                          ? "border-amber-500 bg-amber-500 text-white"
-                          : "border-violet-600 bg-violet-600 text-white"
-                      : "border-gray-200 bg-gray-50 text-coal hover:border-violet-300"
-                  }`}
-                >
-                  <span>{option.label}</span>
-                  <span className={`text-[10px] font-medium ${active ? "text-white/90" : "text-gray-500"}`}>{option.hint}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <button type="button" className={btnPrimaryClass} disabled={saving} onClick={markAttendance}>
-              {saving ? "Saving..." : "Mark Attendance"}
-            </button>
             <button
               type="button"
-              className={btnSecondaryClass}
-              onClick={() => setSelected(selected.length === allIds.length ? [] : allIds)}
+              className={`${btnSecondaryClass} shrink-0 py-1.5 text-xs`}
+              onClick={openAllWeekAttendance}
             >
-              {selected.length === allIds.length ? "Deselect All" : "Select All"}
+              All week attendance
             </button>
-            <span className="text-xs text-gray-500">{selected.length} employee{selected.length === 1 ? "" : "s"} selected</span>
           </div>
-        </div>
-      </div>
-
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="border-b border-gray-100 px-4 py-3">
-          <h3 className="text-sm font-semibold text-coal">Employees</h3>
-          <p className="text-xs text-gray-500">
-            {isSuperAdmin
-              ? "Select labour, drivers, or supervisors to mark for the chosen dates"
-              : "Select one or more employees to mark for the chosen dates"}
-          </p>
-        </div>
-        <DataTable>
-          <DataTableHead>
-            <tr>
-              <th className="px-4 py-2.5">
-                <input
-                  type="checkbox"
-                  aria-label="Select all on page"
-                  checked={allPageSelected}
-                  onChange={togglePage}
-                  disabled={!pageIds.length}
-                />
-              </th>
-              <th className="px-4 py-2.5">Name</th>
-              <th className="px-4 py-2.5">Mobile</th>
-              <th className="px-4 py-2.5">Designation</th>
-              <th className="px-4 py-2.5">Projects</th>
-            </tr>
-          </DataTableHead>
-          <DataTableBody>
-            {workersPage.pageRows.map((worker, i) => (
-              <DataTableRow key={worker.id} zebra={i % 2 === 1}>
-                <DataTableCell>
+          <DataTable>
+            <DataTableHead>
+              <tr>
+                <th className="px-3 py-2">
                   <input
                     type="checkbox"
-                    aria-label={`Select ${worker.full_name}`}
-                    checked={selected.includes(worker.id)}
-                    onChange={() => toggle(worker.id)}
+                    aria-label="Select all on page"
+                    checked={allPageSelected}
+                    onChange={togglePage}
+                    disabled={!pageIds.length}
                   />
-                </DataTableCell>
-                <DataTableCell className="font-medium text-gray-900">{worker.full_name}</DataTableCell>
-                <DataTableCell>{worker.mobile_number || "—"}</DataTableCell>
-                <DataTableCell>{worker.designation}</DataTableCell>
-                <DataTableCell>
-                  {worker.assigned_projects.length
-                    ? worker.assigned_projects.map((project) => project.code).join(", ")
-                    : <span className="text-amber-700">None</span>}
-                </DataTableCell>
-              </DataTableRow>
-            ))}
-            {!labourRows.length && !workers.isLoading && !(isSuperAdmin && supervisors.isLoading) && (
-              <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-sm text-gray-500">
-                  No employees found.
-                </td>
+                </th>
+                <th className="px-3 py-2">Name</th>
+                <th className="px-3 py-2">Designation</th>
+                <th className="px-3 py-2">Projects</th>
+                <th className="px-3 py-2">Attendance</th>
               </tr>
-            )}
-          </DataTableBody>
-        </DataTable>
-        <TablePagination
-          page={workersPage.page}
-          totalPages={workersPage.totalPages}
-          total={workersPage.total}
-          pageSize={workersPage.pageSize}
-          from={workersPage.from}
-          to={workersPage.to}
-          onPageChange={workersPage.setPage}
-        />
+            </DataTableHead>
+            <DataTableBody>
+              {workersPage.pageRows.map((worker, i) => (
+                <DataTableRow key={worker.id} zebra={i % 2 === 1}>
+                  <DataTableCell className="px-3 py-1.5">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${worker.full_name}`}
+                      checked={selected.includes(worker.id)}
+                      onChange={() => toggle(worker.id)}
+                    />
+                  </DataTableCell>
+                  <DataTableCell className="px-3 py-1.5 font-medium text-gray-900">{worker.full_name}</DataTableCell>
+                  <DataTableCell className="px-3 py-1.5">{worker.designation}</DataTableCell>
+                  <DataTableCell className="px-3 py-1.5">
+                    {worker.assigned_projects.length
+                      ? worker.assigned_projects.map((project) => project.code).join(", ")
+                      : <span className="text-amber-700">None</span>}
+                  </DataTableCell>
+                  <DataTableCell className="px-3 py-1.5">
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-violet-700 hover:underline"
+                      onClick={() => {
+                        setAllWeekOpen(false);
+                        setWeekOffset(0);
+                        setExpandedAttendanceId(worker.id);
+                      }}
+                    >
+                      View week
+                    </button>
+                  </DataTableCell>
+                </DataTableRow>
+              ))}
+              {!filteredLabourRows.length && !workers.isLoading && !(isSuperAdmin && supervisors.isLoading) && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500">
+                    No employees match these filters.
+                  </td>
+                </tr>
+              )}
+            </DataTableBody>
+          </DataTable>
+          <TablePagination
+            page={workersPage.page}
+            totalPages={workersPage.totalPages}
+            total={workersPage.total}
+            pageSize={workersPage.pageSize}
+            from={workersPage.from}
+            to={workersPage.to}
+            onPageChange={workersPage.setPage}
+          />
+        </div>
+
+        <div className="space-y-2.5">
+          <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold text-coal">Dates</h3>
+              <div className="flex items-center gap-1">
+                <button type="button" className="rounded-md border border-gray-200 px-2 py-0.5 text-xs font-medium text-coal hover:bg-gray-50" onClick={() => shiftMonth(-1)}>
+                  ‹
+                </button>
+                <p className="min-w-[7.5rem] text-center text-xs font-semibold text-coal">{monthLabel}</p>
+                <button type="button" className="rounded-md border border-gray-200 px-2 py-0.5 text-xs font-medium text-coal hover:bg-gray-50" onClick={() => shiftMonth(1)}>
+                  ›
+                </button>
+              </div>
+            </div>
+            <div className="mt-2 grid grid-cols-7 gap-0.5 text-center text-[9px] font-bold uppercase tracking-wide text-gray-500">
+              {["S", "M", "T", "W", "T", "F", "S"].map((day, i) => (
+                <div key={`${day}-${i}`} className="py-0.5">
+                  {day}
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-0.5">
+              {Array.from({ length: startWeekday }).map((_, index) => (
+                <div key={`pad-${index}`} />
+              ))}
+              {Array.from({ length: daysInMonth }).map((_, index) => {
+                const day = index + 1;
+                const key = toDateKey(day);
+                const active = selectedDates.includes(key);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => toggleDate(day)}
+                    className={`flex h-7 items-center justify-center rounded text-xs font-semibold transition ${
+                      active ? "bg-violet-600 text-white" : "bg-gray-50 text-coal hover:bg-violet-50"
+                    }`}
+                  >
+                    {day}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
+              <span className="font-medium">{selectedDates.length} selected</span>
+              {selectedDates.length > 0 && (
+                <button type="button" className="font-medium text-violet-700 hover:underline" onClick={() => setSelectedDates([])}>
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+            <h3 className="text-xs font-semibold text-coal">Workday</h3>
+            <div className="mt-2 grid grid-cols-7 gap-1">
+              {workdayOptions.map((option) => {
+                const active = workdayValue === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    title={option.hint}
+                    onClick={() => setWorkdayValue(option.value)}
+                    className={`inline-flex h-8 items-center justify-center rounded-md border text-xs font-bold transition ${
+                      active
+                        ? option.value === 0
+                          ? "border-red-500 bg-red-500 text-white"
+                          : option.value === 0.5
+                            ? "border-amber-500 bg-amber-500 text-white"
+                            : "border-violet-600 bg-violet-600 text-white"
+                        : "border-gray-200 bg-gray-50 text-coal hover:border-violet-300"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <button type="button" className={`${btnPrimaryClass} py-1.5 text-xs`} disabled={saving} onClick={markAttendance}>
+                {saving ? "Saving..." : "Mark Attendance"}
+              </button>
+              <button
+                type="button"
+                className={`${btnSecondaryClass} py-1.5 text-xs`}
+                onClick={() => setSelected(selected.length === allIds.length ? [] : allIds)}
+              >
+                {selected.length === allIds.length ? "Deselect" : "Select All"}
+              </button>
+              <span className="text-[11px] text-gray-500">{selected.length} selected</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <Modal
@@ -2670,6 +2714,186 @@ function AttendanceManager() {
               );
             })}
           </ul>
+        </div>
+      </Modal>
+
+      <Modal
+        open={expandedAttendanceId != null}
+        title={attendancePopupEmployee?.full_name || "Attendance"}
+        subtitle={`${attendancePopupEmployee?.designation ?? ""}${
+          attendancePopupEmployee?.designation ? " · " : ""
+        }Wed–Tue payroll week`}
+        onClose={() => {
+          setExpandedAttendanceId(null);
+          setWeekOffset(0);
+        }}
+      >
+        <div className="space-y-3 py-2">
+          <div className="flex items-center justify-center gap-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-coal hover:bg-gray-50"
+              onClick={() => setWeekOffset((v) => v - 1)}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              Prev
+            </button>
+            <p className="min-w-[9rem] text-center text-sm font-semibold text-coal">{payrollWeek.rangeLabel}</p>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-coal hover:bg-gray-50"
+              onClick={() => setWeekOffset((v) => v + 1)}
+            >
+              Next
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {weekAttendance.isLoading ? (
+            <p className="py-6 text-center text-sm text-gray-500">Loading week…</p>
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-gray-200">
+              <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+                {payrollWeek.days.map((day) => (
+                  <div key={day.key} className="px-1 py-2 text-center">
+                    <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-700">
+                      {day.label}
+                    </span>
+                    <span className="block text-[11px] font-normal text-gray-400">{day.dateLabel}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-7 bg-white">
+                {payrollWeek.days.map((day) => (
+                  <div
+                    key={day.key}
+                    className="border-r border-gray-100 px-1 py-3 text-center text-base font-semibold text-gray-900 last:border-r-0"
+                  >
+                    {formatWeekMark(popupWeekMarks[day.key])}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        open={allWeekOpen}
+        wide
+        title="All employee week attendance"
+        subtitle="Wed–Tue payroll week · filter and browse previous or upcoming weeks"
+        onClose={() => {
+          setAllWeekOpen(false);
+          setAllWeekOffset(0);
+        }}
+      >
+        <div className="space-y-3 py-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <input
+              className={`${inputClass} py-1.5 text-sm`}
+              value={allWeekNameFilter}
+              onChange={(e) => setAllWeekNameFilter(e.target.value)}
+              placeholder="Name"
+              aria-label="Filter by name"
+            />
+            <select
+              className={`${inputClass} py-1.5 text-sm`}
+              value={allWeekDesignationFilter}
+              onChange={(e) => setAllWeekDesignationFilter(e.target.value)}
+              aria-label="Filter by designation"
+            >
+              <option value="all">All designations</option>
+              <option value="Labour">Labour</option>
+              <option value="Driver">Driver</option>
+              <option value="Office Staff">Office Staff</option>
+              {isSuperAdmin ? <option value="Supervisor">Supervisor</option> : null}
+            </select>
+            <select
+              className={`${inputClass} py-1.5 text-sm`}
+              value={allWeekProjectFilter}
+              onChange={(e) => setAllWeekProjectFilter(e.target.value)}
+              aria-label="Filter by project"
+            >
+              <option value="all">All projects</option>
+              <option value="unassigned">Unassigned</option>
+              {projectList.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.code} · {project.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center justify-center gap-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-coal hover:bg-gray-50"
+              onClick={() => setAllWeekOffset((v) => v - 1)}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              Prev
+            </button>
+            <p className="min-w-[9rem] text-center text-sm font-semibold text-coal">{allPayrollWeek.rangeLabel}</p>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-coal hover:bg-gray-50"
+              onClick={() => setAllWeekOffset((v) => v + 1)}
+            >
+              Next
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {allWeekAttendance.isLoading ? (
+            <p className="py-6 text-center text-sm text-gray-500">Loading week…</p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-gray-200">
+              <table className="w-full min-w-[720px] text-left text-sm">
+                <thead className="border-b border-gray-200 bg-gray-50 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                  <tr>
+                    <th className="px-3 py-2">Name</th>
+                    <th className="px-3 py-2">Designation</th>
+                    <th className="px-3 py-2">Project</th>
+                    {allPayrollWeek.days.map((day) => (
+                      <th key={day.key} className="px-1.5 py-2 text-center">
+                        <span className="block text-gray-700">{day.label}</span>
+                        <span className="block font-normal normal-case text-gray-400">{day.dateLabel}</span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {allWeekFilteredRows.map((worker, i) => {
+                    const marks = allWeekMarksByLabour.get(worker.id) ?? {};
+                    return (
+                      <tr key={worker.id} className={i % 2 ? "bg-gray-50/60" : "bg-white"}>
+                        <td className="whitespace-nowrap px-3 py-2 font-medium text-gray-900">{worker.full_name}</td>
+                        <td className="whitespace-nowrap px-3 py-2 text-gray-700">{worker.designation}</td>
+                        <td className="whitespace-nowrap px-3 py-2 text-gray-700">
+                          {worker.assigned_projects.length
+                            ? worker.assigned_projects.map((p) => p.code).join(", ")
+                            : "—"}
+                        </td>
+                        {allPayrollWeek.days.map((day) => (
+                          <td key={day.key} className="px-1.5 py-2 text-center font-semibold text-gray-900">
+                            {formatWeekMark(marks[day.key])}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                  {!allWeekFilteredRows.length && (
+                    <tr>
+                      <td colSpan={3 + allPayrollWeek.days.length} className="px-4 py-8 text-center text-sm text-gray-500">
+                        No employees match these filters.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </Modal>
     </section>
@@ -2768,6 +2992,12 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
   });
   const expenses = useQuery<Paginated<Expense>>({ queryKey: ["expenses"], queryFn: api.expenses, retry: false });
   const machinery = useQuery<Paginated<Machinery>>({ queryKey: ["machinery"], queryFn: api.machinery, retry: false });
+  const drivers = useQuery<Paginated<LabourProfile>>({
+    queryKey: ["labour-workers", "drivers"],
+    queryFn: () => api.labourWorkers({ designation: "DRIVER", page_size: 200, ordering: "user__first_name" }),
+    enabled: module === "machinery",
+    retry: false,
+  });
   const fuelLogs = useQuery<Paginated<FuelLog>>({ queryKey: ["fuel-logs"], queryFn: () => api.fuelLogs(), retry: false });
   const machineryUsageList = useQuery<Paginated<MachineryUsage>>({
     queryKey: ["machinery-usage"],
@@ -2886,6 +3116,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
   const materialStockList = materialStock.data?.results ?? [];
   const expenseList = expenses.data?.results ?? [];
   const machineryList = machinery.data?.results ?? [];
+  const driverList = drivers.data?.results ?? [];
   const filteredMachineryList = machineryList.filter((item) =>
     matchesMachineryCompliance(item, machineryComplianceFilter, machineryExpiryFilter),
   );
@@ -3358,6 +3589,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                         />
                       </th>
                       <th className="px-4 py-2.5">Name</th>
+                      <th className="px-4 py-2.5">Driver</th>
                       <th className="px-4 py-2.5">Vehicle</th>
                       <th className="px-4 py-2.5">Insurance</th>
                       <th className="px-4 py-2.5">Permit</th>
@@ -3385,6 +3617,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                           <p>{item.name}</p>
                           <p className="text-xs font-normal text-gray-500">{item.machine_type}</p>
                         </DataTableCell>
+                        <DataTableCell className="text-sm text-gray-700">{item.driver_name || "—"}</DataTableCell>
                         <DataTableCell className="text-xs">
                           <p>{item.vehicle_number || "—"}</p>
                           <p className="text-gray-500">{item.registration_number}</p>
@@ -3737,6 +3970,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                   vehicle_class: formValue(form, "vehicle_class"),
                   chassis_number: formValue(form, "chassis_number"),
                   engine_number: formValue(form, "engine_number"),
+                  driver: formValue(form, "driver") ? Number(formValue(form, "driver")) : null,
                   insurance_provider: formValue(form, "insurance_provider"),
                   insurance_policy_number: formValue(form, "insurance_policy_number"),
                   insurance_start_date: formValue(form, "insurance_start_date"),
@@ -3759,9 +3993,19 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
               }}
             >
               <FormRow label="Machine name"><input className={inputClass} name="name" required /></FormRow>
-              <FormRow label="Type"><input className={inputClass} name="machine_type" required placeholder="Excavator, Truck, Crane..." /></FormRow>
+              <FormRow label="Type"><input className={inputClass} name="machine_type" placeholder="Excavator, Truck, Crane..." /></FormRow>
+              <FormRow label="Driver">
+                <select className={inputClass} name="driver" defaultValue="">
+                  <option value="">No driver assigned</option>
+                  {driverList.map((driver) => (
+                    <option key={driver.id} value={driver.user_id}>
+                      {driver.full_name}
+                    </option>
+                  ))}
+                </select>
+              </FormRow>
               <FormRow label="Vehicle number"><input className={inputClass} name="vehicle_number" placeholder="MH-12-AB-1234" /></FormRow>
-              <FormRow label="Registration number"><input className={inputClass} name="registration_number" required /></FormRow>
+              <FormRow label="Registration number"><input className={inputClass} name="registration_number" placeholder="Auto-generated if empty" /></FormRow>
               <FormRow label="Vehicle class"><input className={inputClass} name="vehicle_class" placeholder="LMV, HMV, Trailer..." /></FormRow>
               <FormRow label="Chassis no."><input className={inputClass} name="chassis_number" /></FormRow>
               <FormRow label="Engine no."><input className={inputClass} name="engine_number" /></FormRow>

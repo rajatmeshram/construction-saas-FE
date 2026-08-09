@@ -31,7 +31,10 @@ const STATUS_COLORS: Record<string, string> = {
 const SPEND_COLORS = ["#7c3aed", "#f59e0b", "#10b981", "#6366f1"];
 
 function formatStatus(status: string) {
-  return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return status
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function formatDateTime(value?: string | null) {
@@ -124,13 +127,19 @@ function ActivityCard({ item }: { item: AttendanceActivityItem }) {
 }
 
 export function DashboardCharts({ data }: { data?: DashboardMetrics }) {
-  const statusData = (data?.status_breakdown ?? [])
-    .filter((item) => item.total > 0)
-    .map((item) => ({
-      name: formatStatus(item.status),
-      value: item.total,
-      color: STATUS_COLORS[item.status] ?? "#9ca3af",
+  const statusData = (() => {
+    const totals = new Map<string, number>();
+    for (const item of data?.status_breakdown ?? []) {
+      if (!item.total) continue;
+      totals.set(item.status, (totals.get(item.status) ?? 0) + item.total);
+    }
+    return Array.from(totals.entries()).map(([status, value]) => ({
+      status,
+      name: formatStatus(status),
+      value,
+      color: STATUS_COLORS[status] ?? "#9ca3af",
     }));
+  })();
 
   const spendData = (data?.spend_breakdown ?? []).filter((item) => item.value > 0);
   const activity = data?.attendance_activity ?? [];
@@ -215,7 +224,7 @@ export function DashboardCharts({ data }: { data?: DashboardMetrics }) {
               <PieChart>
                 <Pie data={statusData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={78} paddingAngle={2}>
                   {statusData.map((entry) => (
-                    <Cell key={entry.name} fill={entry.color} />
+                    <Cell key={entry.status} fill={entry.color} />
                   ))}
                 </Pie>
                 <Tooltip />

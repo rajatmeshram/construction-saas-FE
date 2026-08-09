@@ -259,6 +259,7 @@ export function Modal({
   onClose,
   children,
   footer,
+  wide,
 }: {
   open: boolean;
   title: string;
@@ -266,11 +267,12 @@ export function Modal({
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  wide?: boolean;
 }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-[10vh]">
-      <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-[8vh]">
+      <div className={`w-full rounded-xl border border-gray-200 bg-white shadow-xl ${wide ? "max-w-5xl" : "max-w-lg"}`}>
         <div className="flex items-start justify-between border-b border-gray-100 px-5 py-4">
           <div>
             <h3 className="text-base font-semibold text-gray-900">{title}</h3>
@@ -280,7 +282,7 @@ export function Modal({
             ✕
           </button>
         </div>
-        <div className="max-h-[60vh] overflow-y-auto px-5 py-2">{children}</div>
+        <div className={`overflow-y-auto px-5 py-2 ${wide ? "max-h-[75vh]" : "max-h-[60vh]"}`}>{children}</div>
         {footer && <div className="flex justify-end gap-2 border-t border-gray-100 px-5 py-4">{footer}</div>}
       </div>
     </div>
@@ -345,6 +347,7 @@ export function MemberPicker({
   emptyMessage = "No members available.",
   getBadge,
   maxHeight = "max-h-64",
+  maxSelected,
 }: {
   members: PickerMember[];
   selected: number[];
@@ -352,31 +355,50 @@ export function MemberPicker({
   emptyMessage?: string;
   getBadge?: (id: number) => { label: string; tone: "gray" | "green" | "amber" | "red" | "violet" | "blue" } | null;
   maxHeight?: string;
+  /** When set (e.g. 1), selecting more replaces or disables further picks. */
+  maxSelected?: number;
 }) {
   if (!members.length) {
     return <p className={emptyStateClass}>{emptyMessage}</p>;
   }
+
+  const atLimit = typeof maxSelected === "number" && selected.length >= maxSelected;
 
   return (
     <div className={`overflow-y-auto rounded-lg border border-gray-200 ${maxHeight}`}>
       <ul className="divide-y divide-gray-100">
         {members.map((member) => {
           const checked = selected.includes(member.id);
+          const disabled = atLimit && !checked;
           const badge = getBadge?.(member.id);
           return (
             <li key={member.id}>
               <label
-                className={`flex cursor-pointer items-center gap-3 px-3 py-2.5 transition hover:bg-gray-50 ${
-                  checked ? "bg-violet-50/60" : "bg-white"
+                className={`flex items-center gap-3 px-3 py-2.5 transition ${
+                  disabled
+                    ? "cursor-not-allowed bg-gray-50 opacity-50"
+                    : checked
+                      ? "cursor-pointer bg-violet-50/60 hover:bg-violet-50"
+                      : "cursor-pointer bg-white hover:bg-gray-50"
                 }`}
               >
                 <input
                   type="checkbox"
-                  className="h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                  className="h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 disabled:cursor-not-allowed"
                   checked={checked}
-                  onChange={() =>
-                    onChange(checked ? selected.filter((id) => id !== member.id) : [...selected, member.id])
-                  }
+                  disabled={disabled}
+                  onChange={() => {
+                    if (checked) {
+                      onChange(selected.filter((id) => id !== member.id));
+                      return;
+                    }
+                    if (typeof maxSelected === "number" && maxSelected <= 1) {
+                      onChange([member.id]);
+                      return;
+                    }
+                    if (atLimit) return;
+                    onChange([...selected, member.id]);
+                  }}
                 />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-gray-900">{member.full_name || member.username}</p>

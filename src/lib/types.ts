@@ -93,7 +93,7 @@ export type LabourProfile = {
   username: string;
   email: string;
   employee_id: string | null;
-  designation: "LABOUR" | "DRIVER";
+  designation: "LABOUR" | "DRIVER" | "OFFICE_STAFF";
   salary: string;
   daily_salary: string | null;
   resolved_daily_wage: string;
@@ -104,6 +104,19 @@ export type LabourProfile = {
   updated_at: string;
 };
 
+export type SiteAssignmentHistoryItem = {
+  id: number;
+  project_id: number;
+  project_code: string;
+  project_name: string;
+  role: "LABOUR" | "SUPERVISOR";
+  started_at: string | null;
+  ended_at: string | null;
+  is_current: boolean;
+  assigned_by_name: string;
+  unassigned_by_name: string;
+};
+
 export type LabourSummary = {
   profile: LabourProfile;
   attendance_stats: {
@@ -112,6 +125,7 @@ export type LabourSummary = {
     total_working_hours: number;
     pending_approvals: number;
   };
+  site_assignment_history?: SiteAssignmentHistoryItem[];
   salary_profile: {
     monthly_salary: string;
     daily_wage: string;
@@ -151,6 +165,7 @@ export type SupervisorSummary = {
     total_working_hours: number;
     pending_approvals: number;
   };
+  site_assignment_history?: SiteAssignmentHistoryItem[];
   salary_profile: {
     monthly_salary: string;
     daily_wage: string;
@@ -172,6 +187,20 @@ export type SalaryProfile = {
   monthly_salary: string;
   daily_wage: string;
   overtime_rate: string;
+};
+
+export type AdvancePayment = {
+  id: number;
+  labour: number;
+  labour_name: string;
+  amount: string;
+  date: string;
+  reason: string;
+  adjusted_in_salary: boolean;
+  created_by: number | null;
+  created_by_name?: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type MonthlyAttendance = {
@@ -285,6 +314,7 @@ export type PayrollSiteSheetListItem = {
   week_label: string;
   week_start: string;
   week_end: string;
+  generated_at?: string;
   project: number;
   project_name: string;
   supervisor_name: string;
@@ -299,6 +329,7 @@ export type PayrollSiteSheetDetail = {
   week_label: string;
   week_start: string;
   week_end: string;
+  generated_at?: string;
   project: number;
   project_name: string;
   supervisor_name: string;
@@ -321,8 +352,8 @@ export type Project = {
   code: string;
   client_name: string;
   location: string;
-  start_date: string;
-  end_date: string;
+  start_date: string | null;
+  end_date: string | null;
   estimated_budget: string;
   actual_cost: string;
   status: "DRAFT" | "PLANNING" | "ACTIVE" | "ON_HOLD" | "COMPLETED" | "CANCELLED";
@@ -470,6 +501,8 @@ export type Machinery = NamedItem & {
   vehicle_class: string;
   chassis_number: string;
   engine_number: string;
+  driver: number | null;
+  driver_name?: string;
   insurance_provider: string;
   insurance_policy_number: string;
   insurance_start_date: string | null;
