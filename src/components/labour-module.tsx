@@ -277,6 +277,7 @@ export function WorkersListPage() {
       createFormRef.current?.reset();
       queryClient.invalidateQueries({ queryKey: ["labour-workers"] });
       queryClient.invalidateQueries({ queryKey: ["salary-profiles"] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
     onError: (err) => setCreateError(err instanceof Error ? err.message : "Create failed."),
   });
@@ -422,6 +423,8 @@ export function WorkersListPage() {
       return;
     }
 
+    const projectField = String(form.get("project") ?? "");
+    const projectId = projectField ? Number(projectField) : undefined;
     createWorker.mutate({
       full_name: fullName,
       mobile_number: mobile,
@@ -431,6 +434,7 @@ export function WorkersListPage() {
       designation: designation as "LABOUR" | "DRIVER" | "OFFICE_STAFF",
       status: String(form.get("status") ?? "ACTIVE") as "ACTIVE" | "INACTIVE",
       joining_date: String(form.get("joining_date") ?? "") || undefined,
+      project: Number.isFinite(projectId) ? projectId : undefined,
     });
   }
 
@@ -826,6 +830,21 @@ export function WorkersListPage() {
             </select>
           </FormRow>
           <FormRow label="Joining date"><input className={inputClass} name="joining_date" type="date" /></FormRow>
+          <FormRow label="Site">
+            <select
+              className={inputClass}
+              name="project"
+              defaultValue={projectList.length === 1 ? String(projectList[0].id) : ""}
+              required={!isSuperAdmin}
+            >
+              <option value="">{isSuperAdmin ? "No site (optional)" : "Select site"}</option>
+              {projectList.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.code ? `${project.code} · ${project.name}` : project.name}
+                </option>
+              ))}
+            </select>
+          </FormRow>
           <FormRow label="Status">
             <select className={inputClass} name="status" defaultValue="ACTIVE">
               <option value="ACTIVE">Active</option>

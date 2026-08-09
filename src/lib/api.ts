@@ -814,6 +814,7 @@ export const api = {
     username?: string;
     password?: string;
     email?: string;
+    project?: number;
   }) =>
     request<LabourProfile>("/labour/workers/", {
       method: "POST",
