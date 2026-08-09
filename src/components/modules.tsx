@@ -835,12 +835,12 @@ function ProjectDetail({
     ? `${project.data.id}:${(project.data.labours ?? []).join(",")}:${(project.data.supervisors ?? []).join(",")}`
     : "";
 
-  useEffect(() => {
-    if (!nextTeamSyncKey || nextTeamSyncKey === teamSyncKey) return;
+  // Sync editable team selection when server project membership changes (adjust state during render).
+  if (nextTeamSyncKey && nextTeamSyncKey !== teamSyncKey) {
     setTeamSyncKey(nextTeamSyncKey);
     setProjectLabourIds(project.data?.labours ?? []);
     setProjectSupervisorIds((project.data?.supervisors ?? []).slice(0, 1));
-  }, [nextTeamSyncKey, teamSyncKey, project.data?.labours, project.data?.supervisors]);
+  }
 
   if (project.isLoading) {
     return <p className="rounded-lg border border-gray-200/80 bg-white p-4 text-gray-500 shadow-sm">Loading project...</p>;
