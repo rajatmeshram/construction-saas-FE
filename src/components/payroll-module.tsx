@@ -814,8 +814,6 @@ function DayHeaders({ headers }: { headers: PayrollDayHeader[] }) {
 export function PayrollWeekDetailPage() {
   const params = useParams();
   const id = Number(params?.weekId);
-  const user = useAppSelector((state) => state.auth.user);
-  const isSuperAdmin = user?.role === "SUPER_ADMIN";
   const [message, setMessage] = useState("");
   const [exporting, setExporting] = useState(false);
 
@@ -859,7 +857,7 @@ export function PayrollWeekDetailPage() {
             )}
           </div>
         </div>
-        {isSuperAdmin && week && (
+        {week && (
           <button type="button" className={`${btnSecondaryClass} inline-flex items-center gap-1.5`} disabled={exporting} onClick={download}>
             <Download className="h-4 w-4" />
             {exporting ? "Downloading..." : "Download Excel"}
@@ -935,8 +933,6 @@ function PayrollWeekSheetTable({
 export function PayrollSiteSheetDetailPage() {
   const params = useParams();
   const id = Number(params?.id);
-  const user = useAppSelector((state) => state.auth.user);
-  const isSuperAdmin = user?.role === "SUPER_ADMIN";
   const [message, setMessage] = useState("");
   const [exporting, setExporting] = useState(false);
 
@@ -980,7 +976,7 @@ export function PayrollSiteSheetDetailPage() {
             )}
           </div>
         </div>
-        {isSuperAdmin && sheet && (
+        {sheet && (
           <button type="button" className={`${btnSecondaryClass} inline-flex items-center gap-1.5`} disabled={exporting} onClick={download}>
             <Download className="h-4 w-4" />
             {exporting ? "Downloading..." : "Download Excel"}
@@ -1066,8 +1062,6 @@ function PayrollSiteSheetTable({
 }
 
 export function PayrollWeeksBrowsePage() {
-  const user = useAppSelector((state) => state.auth.user);
-  const isSuperAdmin = user?.role === "SUPER_ADMIN";
   const [message, setMessage] = useState("");
   const [exporting, setExporting] = useState(false);
   const [index, setIndex] = useState(0);
@@ -1148,7 +1142,7 @@ export function PayrollWeeksBrowsePage() {
             Next
             <ChevronRight className="h-4 w-4" />
           </button>
-          {isSuperAdmin && week && (
+          {week && (
             <button type="button" className={`${btnSecondaryClass} inline-flex items-center gap-1.5`} disabled={exporting} onClick={download}>
               <Download className="h-4 w-4" />
               {exporting ? "Downloading..." : "Download Excel"}
@@ -1169,8 +1163,6 @@ export function PayrollWeeksBrowsePage() {
 }
 
 export function PayrollSiteSheetsBrowsePage() {
-  const user = useAppSelector((state) => state.auth.user);
-  const isSuperAdmin = user?.role === "SUPER_ADMIN";
   const [message, setMessage] = useState("");
   const [exporting, setExporting] = useState(false);
   const [index, setIndex] = useState(0);
@@ -1251,7 +1243,7 @@ export function PayrollSiteSheetsBrowsePage() {
             Next
             <ChevronRight className="h-4 w-4" />
           </button>
-          {isSuperAdmin && sheet && (
+          {sheet && (
             <button type="button" className={`${btnSecondaryClass} inline-flex items-center gap-1.5`} disabled={exporting} onClick={download}>
               <Download className="h-4 w-4" />
               {exporting ? "Downloading..." : "Download Excel"}
