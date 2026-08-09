@@ -11,12 +11,16 @@ Ensure this `frontend` folder is in a GitHub repo (root of the repo, or set **Ba
 1. [Netlify](https://app.netlify.com/) → **Add new site** → **Import an existing project**
 2. Connect GitHub and select the repo
 3. If the repo root is `construction-saas`, set **Base directory** to `frontend`
-4. Build settings (auto-detected from `netlify.toml`):
+4. Build settings (from `netlify.toml`):
    - **Build command:** `npm run build`
-   - **Publish directory:** `.next` (required — do not leave blank or set to `.`)
+   - **Publish directory:** `.next` (must not equal the base directory)
    - **Plugin:** `@netlify/plugin-nextjs` (handles SSR routes)
 
-> **Important:** In Netlify UI → **Build & deploy** → **Continuous deployment**, set **Publish directory** to `.next` or clear it so `netlify.toml` wins. If publish equals the base directory (e.g. both `.` or both `frontend`), the build fails with: *"Your publish directory cannot be the same as the base directory"*.
+> **Important:** In Netlify UI → **Site configuration** → **Build & deploy** → **Build settings**, set:
+> - **Base directory:** `frontend`
+> - **Publish directory:** `.next`
+>
+> If Publish is blank or `.`, it equals the base dir and the build fails with: *"Your publish directory cannot be the same as the base directory"*.
 
 ## 3. Environment variables
 

@@ -1,7 +1,8 @@
 [build]
   command = "npm run build"
-  # Leave publish unset — @netlify/plugin-nextjs sets the correct output for Next.js App Router.
-  # Do NOT publish ".next" as a static folder; that causes chunk 404s.
+  # Required: must differ from the site base directory or @netlify/plugin-nextjs fails.
+  # The plugin still handles SSR; do not treat this as a static-only export.
+  publish = ".next"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
