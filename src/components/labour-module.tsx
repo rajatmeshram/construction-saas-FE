@@ -1502,22 +1502,6 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
     queryFn: () => api.monthlyAttendance(calendarMonth, calendarYear, supervisorId),
   });
 
-  const attendance = useQuery({
-    queryKey: ["attendance", "supervisor", supervisorId],
-    queryFn: () => api.attendance({ labourId: supervisorId }),
-  });
-
-  const manual = useMutation({
-    mutationFn: api.manualAttendance,
-    onSuccess: () => {
-      setMessage("Attendance saved.");
-      queryClient.invalidateQueries({ queryKey: ["attendance", "supervisor", supervisorId] });
-      queryClient.invalidateQueries({ queryKey: ["monthly-attendance", supervisorId] });
-      queryClient.invalidateQueries({ queryKey: ["supervisor-profile", supervisorId] });
-    },
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Attendance failed."),
-  });
-
   const deleteSupervisor = useMutation({
     mutationFn: () => api.deleteUser(supervisorId),
     onSuccess: () => {
@@ -1527,31 +1511,11 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
     onError: (err) => setMessage(err instanceof Error ? err.message : "Remove failed."),
   });
 
-  function submitManual(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!summary.data) return;
-    const form = new FormData(event.currentTarget);
-    const projectField = form.get("project");
-    const project = projectField ? Number(projectField) : undefined;
-    manual.mutate({
-      labour: supervisorId,
-      project,
-      date: String(form.get("date")),
-      punch_in_time: String(form.get("punch_in_time") || "") || undefined,
-      punch_out_time: String(form.get("punch_out_time") || "") || undefined,
-      workday_value: Number(form.get("workday_value")),
-      extra_hours: Number(form.get("extra_hours") || 0) || undefined,
-      notes: String(form.get("notes") || ""),
-    });
-    event.currentTarget.reset();
-  }
-
   if (summary.isLoading) return <p className="rounded-lg border border-gray-200/80 bg-white p-4 text-sm text-gray-500 shadow-sm">Loading...</p>;
   if (!summary.data) return <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">Supervisor not found.</p>;
 
   const profile = summary.data.profile;
   const stats = summary.data.attendance_stats;
-  const records = attendance.data?.results ?? [];
   const assignedProjects = profile.assigned_projects ?? [];
   const salaryProfile = summary.data.salary_profile;
   const monthPresentDays = monthly.data?.present_days ?? 0;
@@ -1626,60 +1590,6 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
             <div className="rounded-xl bg-green-50 p-2"><p className="text-[10px] uppercase text-green-800">Workdays</p><p className="font-black text-green-900">{formatDayCount(monthPresentDays)}</p></div>
             <div className="rounded-xl bg-red-50 p-2"><p className="text-[10px] uppercase text-red-800">Absent</p><p className="font-black text-red-900">{formatDayCount(monthAbsentDays)}</p></div>
           </div>
-        </div>
-      </div>
-
-      <form onSubmit={submitManual} className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
-        <h3 className="text-sm font-semibold text-coal">Mark Attendance</h3>
-        <div className="mt-4 grid gap-4 md:grid-cols-3">
-          {assignedProjects.length === 1 ? (
-            <input type="hidden" name="project" value={assignedProjects[0].id} />
-          ) : null}
-          {assignedProjects.length > 1 ? (
-            <select className={inputClass} name="project" defaultValue={String(assignedProjects[0].id)} required>
-              {assignedProjects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.code ? `${project.code} - ${project.name}` : project.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <div className={`${inputClass} flex items-center text-gray-600`}>
-              {assignedSiteLabel || "No site assigned"}
-            </div>
-          )}
-          <input className={inputClass} name="date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} />
-          <input className={inputClass} name="punch_in_time" type="time" />
-          <input className={inputClass} name="punch_out_time" type="time" />
-          <select className={inputClass} name="workday_value" defaultValue="1">
-            <option value="0">Absent (0)</option>
-            <option value="1">1 workday</option>
-            <option value="1.5">1.5 workdays</option>
-            <option value="2">2 workdays</option>
-            <option value="2.5">2.5 workdays</option>
-            <option value="3">3 workdays</option>
-          </select>
-          <input className={inputClass} name="extra_hours" type="number" min="0" step="0.5" placeholder="Extra hours (optional)" />
-          <input className={inputClass} name="notes" placeholder="Notes (optional)" />
-        </div>
-        <button className={`${btnPrimaryClass} mt-3`} disabled={manual.isPending}>
-          {manual.isPending ? "Saving..." : "Save Attendance"}
-        </button>
-      </form>
-
-      <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
-        <h3 className="text-sm font-semibold text-coal">Attendance History</h3>
-        <div className="mt-4 space-y-2">
-          {records.map((record) => (
-            <div key={record.id} className="flex flex-wrap justify-between gap-2 rounded-md bg-gray-50 p-3 text-sm">
-              <p className="font-bold">{formatDateTime(record.punch_in_at)}</p>
-              <p>
-                {record.workday_value != null ? `${Number(record.workday_value)}d · ` : ""}
-                {record.working_hours}h · {record.approval_status}
-              </p>
-            </div>
-          ))}
-          {!records.length && <p className="text-gray-500">No attendance records.</p>}
         </div>
       </div>
     </section>

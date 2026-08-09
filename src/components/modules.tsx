@@ -2948,13 +2948,17 @@ function matchesMachineryCompliance(item: Machinery, compliance: MachineryCompli
     return Boolean(machineryComplianceDate(item, compliance));
   }
 
-  return dateFields.some((key) => {
+  const dateMatch = dateFields.some((key) => {
     const date = machineryComplianceDate(item, key);
     if (expiry === "upcoming") return isUpcomingExpiry(date);
     if (expiry === "expired") return isExpired(date);
     // any issue
     return isUpcomingExpiry(date) || isExpired(date);
-  }) || (compliance === "all" && expiry !== "expired" && !item.hsrp_done && (expiry === "upcoming" || expiry === "any"));
+  });
+  // HSRP pending is an open compliance item, but not a date-based "upcoming" expiry.
+  const hsrpPendingMatch =
+    compliance === "all" && expiry === "any" && !item.hsrp_done;
+  return dateMatch || hsrpPendingMatch;
 }
 
 function formatShortDate(value?: string | null) {
@@ -2980,7 +2984,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
   const [fuelMachineryId, setFuelMachineryId] = useState("");
   const [previousMeter, setPreviousMeter] = useState("");
   const [machineryComplianceFilter, setMachineryComplianceFilter] = useState<MachineryComplianceKey>("all");
-  const [machineryExpiryFilter, setMachineryExpiryFilter] = useState<MachineryExpiryKey>("upcoming");
+  const [machineryExpiryFilter, setMachineryExpiryFilter] = useState<MachineryExpiryKey>("all");
   const [selectedMachinery, setSelectedMachinery] = useState<number[]>([]);
   const projects = useQuery<Paginated<Project>>({ queryKey: ["projects"], queryFn: api.projects });
   const vendors = useQuery<Paginated<Vendor>>({ queryKey: ["vendors"], queryFn: api.vendors, retry: false });
@@ -3554,7 +3558,9 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                       </select>
                     </label>
                     <p className="pb-2 text-sm text-gray-500">
-                      {filteredMachineryList.length} of {machineryList.length} machines
+                      {machineryExpiryFilter === "all" && machineryComplianceFilter === "all"
+                        ? `${machineryList.length} machine${machineryList.length === 1 ? "" : "s"}`
+                        : `${filteredMachineryList.length} of ${machineryList.length} machines`}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
