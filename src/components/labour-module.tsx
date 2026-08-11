@@ -132,10 +132,45 @@ function formatWorkdayValue(value?: number) {
 }
 
 function designationLabel(designation?: string) {
+  if (!designation) return "—";
+  if (designation === "LABOUR") return "Labour";
   if (designation === "DRIVER") return "Driver";
   if (designation === "OFFICE_STAFF") return "Office Staff";
   if (designation === "SUPERVISOR") return "Supervisor";
-  return "Labour";
+  return designation;
+}
+
+const BUILTIN_DESIGNATIONS = [
+  { value: "LABOUR", label: "Labour" },
+  { value: "DRIVER", label: "Driver" },
+  { value: "OFFICE_STAFF", label: "Office Staff" },
+] as const;
+
+const CUSTOM_DESIGNATION_VALUE = "__custom__";
+
+type DirectoryRow = {
+  key: string;
+  kind: "labour" | "supervisor";
+  id: number;
+  userId: number;
+  full_name: string;
+  mobile_number: string | null;
+  email?: string | null;
+  designation: string;
+  designationCode: string;
+  salary: string | null;
+  daily_salary: string | null;
+  resolved_daily_wage: string | null;
+  status: "ACTIVE" | "INACTIVE";
+  joining_date: string | null;
+  assigned_projects: AssignedProject[];
+  href: string;
+  wageFromProfile?: boolean;
+};
+
+function resolveDesignationChoice(code: string): { choice: string; custom: string } {
+  if (!code) return { choice: "LABOUR", custom: "" };
+  return { choice: code, custom: "" };
 }
 
 function calendarDayStyle(workday?: number, hasEntry?: boolean) {
@@ -232,9 +267,16 @@ export function WorkersListPage() {
   const [message, setMessage] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [designationChoice, setDesignationChoice] = useState("LABOUR");
+  const [customDesignation, setCustomDesignation] = useState("");
+  const [editTarget, setEditTarget] = useState<DirectoryRow | null>(null);
+  const [editError, setEditError] = useState("");
+  const [editDesignationChoice, setEditDesignationChoice] = useState("LABOUR");
+  const [editCustomDesignation, setEditCustomDesignation] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [assigningKey, setAssigningKey] = useState<string | null>(null);
   const createFormRef = useRef<HTMLFormElement>(null);
+  const editFormRef = useRef<HTMLFormElement>(null);
 
   const workers = useQuery({
     queryKey: ["labour-workers", nameSearch],
@@ -274,6 +316,8 @@ export function WorkersListPage() {
       setMessage("Employee created.");
       setCreateError("");
       setCreateOpen(false);
+      setDesignationChoice("LABOUR");
+      setCustomDesignation("");
       createFormRef.current?.reset();
       queryClient.invalidateQueries({ queryKey: ["labour-workers"] });
       queryClient.invalidateQueries({ queryKey: ["salary-profiles"] });
@@ -288,12 +332,25 @@ export function WorkersListPage() {
       setMessage("Supervisor created.");
       setCreateError("");
       setCreateOpen(false);
+      setDesignationChoice("LABOUR");
+      setCustomDesignation("");
       createFormRef.current?.reset();
       queryClient.invalidateQueries({ queryKey: ["supervisors"] });
       queryClient.invalidateQueries({ queryKey: ["salary-profiles"] });
       queryClient.invalidateQueries({ queryKey: ["users"] });
     },
     onError: (err) => setCreateError(err instanceof Error ? err.message : "Create failed."),
+  });
+
+  const updateWorker = useMutation({
+    mutationFn: ({ id, payload }: { id: number; payload: Parameters<typeof api.updateLabourWorker>[1] }) =>
+      api.updateLabourWorker(id, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["labour-workers"] });
+      queryClient.invalidateQueries({ queryKey: ["salary-profiles"] });
+      queryClient.invalidateQueries({ queryKey: ["labour-summary"] });
+    },
+    onError: (err) => setEditError(err instanceof Error ? err.message : "Update failed."),
   });
 
   const importWorkers = useMutation({
@@ -372,10 +429,17 @@ export function WorkersListPage() {
       }));
       for (const project of working) {
         const current = project[field];
-        const has = current.includes(userId);
         const shouldHave = projectId !== null && project.id === projectId;
-        if (has === shouldHave) continue;
-        const next = shouldHave ? [...current, userId] : current.filter((id) => id !== userId);
+        const next = shouldHave
+          ? kind === "supervisor"
+            ? [userId]
+            : current.includes(userId)
+              ? current
+              : [...current, userId]
+          : current.filter((id) => id !== userId);
+        const unchanged =
+          next.length === current.length && next.every((id, index) => id === current[index]);
+        if (unchanged) continue;
         await api.updateProject(project.id, { [field]: next });
         project[field] = next;
       }
@@ -393,12 +457,20 @@ export function WorkersListPage() {
     event.preventDefault();
     setCreateError("");
     const form = new FormData(event.currentTarget);
-    const designation = String(form.get("designation") ?? "LABOUR");
     const fullName = String(form.get("full_name") ?? "").trim();
     const mobile = String(form.get("mobile_number") ?? "").trim();
     const email = String(form.get("email") ?? "").trim();
     const salary = String(form.get("salary") ?? "") || "0";
     const dailySalary = String(form.get("daily_salary") ?? "") || null;
+
+    let designation = designationChoice;
+    if (designationChoice === CUSTOM_DESIGNATION_VALUE) {
+      designation = customDesignation.trim();
+      if (!designation) {
+        setCreateError("Enter a new role name.");
+        return;
+      }
+    }
 
     if (designation === "SUPERVISOR") {
       if (!isSuperAdmin) {
@@ -431,7 +503,7 @@ export function WorkersListPage() {
       email: email || undefined,
       salary,
       daily_salary: dailySalary,
-      designation: designation as "LABOUR" | "DRIVER" | "OFFICE_STAFF",
+      designation,
       status: String(form.get("status") ?? "ACTIVE") as "ACTIVE" | "INACTIVE",
       joining_date: String(form.get("joining_date") ?? "") || undefined,
       project: Number.isFinite(projectId) ? projectId : undefined,
@@ -441,25 +513,104 @@ export function WorkersListPage() {
   function closeCreateModal() {
     setCreateOpen(false);
     setCreateError("");
+    setDesignationChoice("LABOUR");
+    setCustomDesignation("");
   }
 
-  type DirectoryRow = {
-    key: string;
-    kind: "labour" | "supervisor";
-    id: number;
-    userId: number;
-    full_name: string;
-    mobile_number: string | null;
-    designation: string;
-    salary: string | null;
-    daily_salary: string | null;
-    resolved_daily_wage: string | null;
-    assigned_projects: AssignedProject[];
-    href: string;
-    wageFromProfile?: boolean;
-  };
+  function openEditModal(row: DirectoryRow) {
+    if (row.kind === "supervisor" && !isSuperAdmin) return;
+    const resolved = resolveDesignationChoice(row.designationCode);
+    setEditTarget(row);
+    setEditError("");
+    setEditDesignationChoice(row.kind === "supervisor" ? "SUPERVISOR" : resolved.choice);
+    setEditCustomDesignation(resolved.custom);
+  }
+
+  function closeEditModal() {
+    setEditTarget(null);
+    setEditError("");
+    setEditDesignationChoice("LABOUR");
+    setEditCustomDesignation("");
+  }
+
+  async function submitEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editTarget) return;
+    setEditError("");
+    const form = new FormData(event.currentTarget);
+    const projectField = String(form.get("project") ?? "");
+    const projectId = projectField ? Number(projectField) : null;
+    const currentProjectId =
+      editTarget.assigned_projects.length === 1 ? editTarget.assigned_projects[0].id : null;
+
+    try {
+      if (editTarget.kind === "supervisor") {
+        if (!isSuperAdmin) {
+          setEditError("Only Super Admin can edit supervisors.");
+          return;
+        }
+        await api.updateUser(editTarget.userId, {
+          full_name: String(form.get("full_name") ?? "").trim(),
+          mobile_number: String(form.get("mobile_number") ?? "").trim(),
+          salary: String(form.get("salary") ?? "") || "0",
+          daily_salary: String(form.get("daily_salary") ?? "") || null,
+        });
+        if (projectId !== currentProjectId) {
+          await assignProject.mutateAsync({
+            userId: editTarget.userId,
+            kind: "supervisor",
+            projectId: Number.isFinite(projectId) ? projectId : null,
+          });
+        }
+        queryClient.invalidateQueries({ queryKey: ["supervisors"] });
+        queryClient.invalidateQueries({ queryKey: ["salary-profiles"] });
+        queryClient.invalidateQueries({ queryKey: ["supervisor-profile"] });
+      } else {
+        let designation = editDesignationChoice;
+        if (editDesignationChoice === CUSTOM_DESIGNATION_VALUE) {
+          designation = editCustomDesignation.trim();
+          if (!designation) {
+            setEditError("Enter a new role name.");
+            return;
+          }
+        }
+        await updateWorker.mutateAsync({
+          id: editTarget.id,
+          payload: {
+            full_name: String(form.get("full_name") ?? "").trim(),
+            mobile_number: String(form.get("mobile_number") ?? "").trim(),
+            salary: String(form.get("salary") ?? "") || "0",
+            daily_salary: String(form.get("daily_salary") ?? "") || null,
+            designation,
+            status: String(form.get("status") ?? "ACTIVE") as "ACTIVE" | "INACTIVE",
+            joining_date: String(form.get("joining_date") ?? "") || null,
+          },
+        });
+        if (projectId !== currentProjectId) {
+          await assignProject.mutateAsync({
+            userId: editTarget.userId,
+            kind: "labour",
+            projectId: Number.isFinite(projectId) ? projectId : null,
+          });
+        }
+      }
+      setMessage(editTarget.kind === "supervisor" ? "Supervisor updated." : "Employee updated.");
+      closeEditModal();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Update failed.");
+    }
+  }
 
   const projectList = projects.data?.results ?? [];
+
+  const designationOptions = useMemo(() => {
+    const labels = new Set<string>(BUILTIN_DESIGNATIONS.map((item) => item.label));
+    for (const worker of workers.data?.results ?? []) {
+      labels.add(designationLabel(worker.designation));
+    }
+    if (isSuperAdmin) labels.add("Supervisor");
+    return Array.from(labels).sort((a, b) => a.localeCompare(b));
+  }, [workers.data?.results, isSuperAdmin]);
 
   const rows = useMemo(() => {
     const labourRows: DirectoryRow[] = (workers.data?.results ?? []).map((worker) => {
@@ -471,10 +622,14 @@ export function WorkersListPage() {
         userId: worker.user_id,
         full_name: worker.full_name,
         mobile_number: worker.mobile_number,
+        email: worker.email,
         designation: designationLabel(worker.designation),
+        designationCode: worker.designation || "LABOUR",
         salary: wage?.monthly ?? worker.salary,
         daily_salary: wage?.daily ?? worker.daily_salary,
         resolved_daily_wage: wage?.daily ?? worker.resolved_daily_wage,
+        status: worker.status ?? "ACTIVE",
+        joining_date: worker.joining_date ?? null,
         assigned_projects: worker.assigned_projects ?? [],
         href: `/workers/${worker.id}`,
         wageFromProfile: Boolean(wage),
@@ -501,9 +656,12 @@ export function WorkersListPage() {
             full_name: supervisor.full_name || supervisor.username,
             mobile_number: supervisor.mobile_number,
             designation: "Supervisor",
+            designationCode: "SUPERVISOR",
             salary: wage?.monthly ?? null,
             daily_salary: wage?.daily ?? null,
             resolved_daily_wage: wage?.daily ?? null,
+            status: "ACTIVE" as const,
+            joining_date: null,
             assigned_projects: supervisor.assigned_projects ?? [],
             href: `/supervisors/${supervisor.id}`,
             wageFromProfile: Boolean(wage),
@@ -595,10 +753,11 @@ export function WorkersListPage() {
               aria-label="Filter by designation"
             >
               <option value="all">All designations</option>
-              <option value="Labour">Labour</option>
-              <option value="Driver">Driver</option>
-              <option value="Office Staff">Office Staff</option>
-              {isSuperAdmin ? <option value="Supervisor">Supervisor</option> : null}
+              {designationOptions.map((label) => (
+                <option key={label} value={label}>
+                  {label}
+                </option>
+              ))}
             </select>
             <select
               className={`${inputClass} !w-40 shrink-0 py-1.5`}
@@ -637,6 +796,7 @@ export function WorkersListPage() {
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) importWorkers.mutate(file);
+                  e.target.value = "";
                 }}
               />
             </label>
@@ -645,6 +805,8 @@ export function WorkersListPage() {
               className={btnPrimaryClass}
               onClick={() => {
                 setCreateError("");
+                setDesignationChoice("LABOUR");
+                setCustomDesignation("");
                 setCreateOpen(true);
               }}
             >
@@ -695,17 +857,10 @@ export function WorkersListPage() {
                 <DataTableCell>{worker.mobile_number || "—"}</DataTableCell>
                 <DataTableCell>{worker.designation}</DataTableCell>
                 <DataTableCell>
-                  {worker.kind === "supervisor" ? (
-                    <span className="text-sm text-gray-700">
-                      {assigned.length
-                        ? assigned.map((project) => (project.code ? `${project.code} · ${project.name}` : project.name)).join(" | ")
-                        : "Unassigned"}
-                    </span>
-                  ) : (
                   <select
                     className={`${inputClass} min-w-[10rem] py-1.5 text-sm`}
                     aria-label={`Project for ${worker.full_name}`}
-                    disabled={projectBusy || projects.isLoading}
+                    disabled={projectBusy || projects.isLoading || (worker.kind === "supervisor" && !isSuperAdmin)}
                     value={projectValue}
                     onChange={(e) => {
                       const raw = e.target.value;
@@ -728,11 +883,10 @@ export function WorkersListPage() {
                     ) : null}
                     {projectList.map((project) => (
                       <option key={project.id} value={project.id}>
-                        {project.code} · {project.name}
+                        {project.code ? `${project.code} · ${project.name}` : project.name}
                       </option>
                     ))}
                   </select>
-                  )}
                 </DataTableCell>
                 <DataTableCell>{worker.salary != null && worker.salary !== "" ? formatCurrency(worker.salary) : "—"}</DataTableCell>
                 <DataTableCell>
@@ -754,6 +908,15 @@ export function WorkersListPage() {
                     <Link href={worker.href} className="text-sm font-medium text-violet-700 hover:underline">
                       View
                     </Link>
+                    {worker.kind === "labour" || (worker.kind === "supervisor" && isSuperAdmin) ? (
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-violet-700 hover:underline"
+                        onClick={() => openEditModal(worker)}
+                      >
+                        Edit
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="text-sm font-medium text-red-700 hover:underline disabled:opacity-60"
@@ -821,14 +984,40 @@ export function WorkersListPage() {
           <FormRow label="Per day salary">
             <input className={inputClass} name="daily_salary" type="number" min="0" step="0.01" placeholder="Optional — else monthly ÷ 26" />
           </FormRow>
-          <FormRow label="Designation">
-            <select className={inputClass} name="designation" defaultValue="LABOUR">
-              <option value="LABOUR">Labour</option>
-              <option value="DRIVER">Driver</option>
-              <option value="OFFICE_STAFF">Office Staff</option>
+          <FormRow label="Designation / Role">
+            <select
+              className={inputClass}
+              value={designationChoice}
+              onChange={(e) => setDesignationChoice(e.target.value)}
+            >
+              {BUILTIN_DESIGNATIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
               {isSuperAdmin ? <option value="SUPERVISOR">Supervisor</option> : null}
+              {designationOptions
+                .filter((label) => !BUILTIN_DESIGNATIONS.some((item) => item.label === label) && label !== "Supervisor")
+                .map((label) => (
+                  <option key={label} value={label}>
+                    {label}
+                  </option>
+                ))}
+              <option value={CUSTOM_DESIGNATION_VALUE}>+ Add new role…</option>
             </select>
           </FormRow>
+          {designationChoice === CUSTOM_DESIGNATION_VALUE ? (
+            <FormRow label="New role name">
+              <input
+                className={inputClass}
+                value={customDesignation}
+                onChange={(e) => setCustomDesignation(e.target.value)}
+                placeholder="e.g. Mason, Electrician, Welder"
+                required
+                autoFocus
+              />
+            </FormRow>
+          ) : null}
           <FormRow label="Joining date"><input className={inputClass} name="joining_date" type="date" /></FormRow>
           <FormRow label="Site">
             <select
@@ -853,6 +1042,143 @@ export function WorkersListPage() {
           </FormRow>
         </form>
       </Modal>
+
+      <Modal
+        open={Boolean(editTarget)}
+        title={editTarget?.kind === "supervisor" ? "Edit Supervisor" : "Edit Employee"}
+        subtitle={editTarget ? `Update ${editTarget.full_name}` : "Update record"}
+        onClose={closeEditModal}
+        footer={
+          <>
+            <button type="button" className={btnSecondaryClass} onClick={closeEditModal}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              form="edit-labour-form"
+              className={btnPrimaryClass}
+              disabled={updateWorker.isPending || assignProject.isPending}
+            >
+              {updateWorker.isPending || assignProject.isPending ? "Saving..." : "Save changes"}
+            </button>
+          </>
+        }
+      >
+        {editTarget ? (
+          <form id="edit-labour-form" ref={editFormRef} key={editTarget.key} onSubmit={submitEdit}>
+            {editError && (
+              <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{editError}</p>
+            )}
+            <FormRow label="Full name">
+              <input className={inputClass} name="full_name" defaultValue={editTarget.full_name} required />
+            </FormRow>
+            <FormRow label="Mobile">
+              <input className={inputClass} name="mobile_number" defaultValue={editTarget.mobile_number ?? ""} />
+            </FormRow>
+            <FormRow label="Monthly salary">
+              <input
+                className={inputClass}
+                name="salary"
+                type="number"
+                min="0"
+                step="0.01"
+                defaultValue={editTarget.salary ?? "0"}
+              />
+            </FormRow>
+            <FormRow label="Per day salary">
+              <input
+                className={inputClass}
+                name="daily_salary"
+                type="number"
+                min="0"
+                step="0.01"
+                defaultValue={editTarget.daily_salary ?? ""}
+                placeholder="Optional — else monthly ÷ 26"
+              />
+            </FormRow>
+            {editTarget.kind === "labour" ? (
+              <>
+                <FormRow label="Designation / Role">
+                  <select
+                    className={inputClass}
+                    value={editDesignationChoice}
+                    onChange={(e) => setEditDesignationChoice(e.target.value)}
+                  >
+                    {BUILTIN_DESIGNATIONS.map((item) => (
+                      <option key={item.value} value={item.value}>
+                        {item.label}
+                      </option>
+                    ))}
+                    {Array.from(
+                      new Set(
+                        (workers.data?.results ?? [])
+                          .map((worker) => worker.designation)
+                          .filter(
+                            (code) =>
+                              code &&
+                              !BUILTIN_DESIGNATIONS.some((item) => item.value === code) &&
+                              code !== "SUPERVISOR",
+                          ),
+                      ),
+                    ).map((code) => (
+                      <option key={code} value={code}>
+                        {designationLabel(code)}
+                      </option>
+                    ))}
+                    <option value={CUSTOM_DESIGNATION_VALUE}>+ Add new role…</option>
+                  </select>
+                </FormRow>
+                {editDesignationChoice === CUSTOM_DESIGNATION_VALUE ? (
+                  <FormRow label="New role name">
+                    <input
+                      className={inputClass}
+                      value={editCustomDesignation}
+                      onChange={(e) => setEditCustomDesignation(e.target.value)}
+                      placeholder="e.g. Mason, Electrician, Welder"
+                      required
+                      autoFocus
+                    />
+                  </FormRow>
+                ) : null}
+                <FormRow label="Joining date">
+                  <input
+                    className={inputClass}
+                    name="joining_date"
+                    type="date"
+                    defaultValue={editTarget.joining_date ?? ""}
+                  />
+                </FormRow>
+                <FormRow label="Status">
+                  <select className={inputClass} name="status" defaultValue={editTarget.status}>
+                    <option value="ACTIVE">Active</option>
+                    <option value="INACTIVE">Inactive</option>
+                  </select>
+                </FormRow>
+              </>
+            ) : (
+              <FormRow label="Designation">
+                <input className={inputClass} value="Supervisor" disabled readOnly />
+              </FormRow>
+            )}
+            <FormRow label="Site">
+              <select
+                className={inputClass}
+                name="project"
+                defaultValue={
+                  editTarget.assigned_projects.length === 1 ? String(editTarget.assigned_projects[0].id) : ""
+                }
+              >
+                <option value="">No site (optional)</option>
+                {projectList.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.code ? `${project.code} · ${project.name}` : project.name}
+                  </option>
+                ))}
+              </select>
+            </FormRow>
+          </form>
+        ) : null}
+      </Modal>
     </section>
   );
 }
@@ -861,6 +1187,10 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
+  const [editOpen, setEditOpen] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [editDesignationChoice, setEditDesignationChoice] = useState("LABOUR");
+  const [editCustomDesignation, setEditCustomDesignation] = useState("");
   const [selectedSalary, setSelectedSalary] = useState<Salary | null>(null);
   const now = new Date();
   const [calendarMonth, setCalendarMonth] = useState(now.getMonth() + 1);
@@ -898,6 +1228,20 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
     onError: (err) => setMessage(err instanceof Error ? err.message : "Remove failed."),
   });
 
+  const updateWorker = useMutation({
+    mutationFn: (payload: Parameters<typeof api.updateLabourWorker>[1]) =>
+      api.updateLabourWorker(workerId, payload),
+    onSuccess: () => {
+      setMessage("Employee updated.");
+      setEditOpen(false);
+      setEditError("");
+      queryClient.invalidateQueries({ queryKey: ["labour-summary", workerId] });
+      queryClient.invalidateQueries({ queryKey: ["labour-workers"] });
+      queryClient.invalidateQueries({ queryKey: ["salary-profiles"] });
+    },
+    onError: (err) => setEditError(err instanceof Error ? err.message : "Update failed."),
+  });
+
   const salaryRows = workerSalaries.data ?? [];
   const salariesPage = useTablePage(salaryRows, { resetKey: `${salaryMonth}-${salaryYear}-${workerId}` });
 
@@ -918,6 +1262,37 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
   const monthAbsentDays = monthly.data?.absent_days ?? 0;
   const formatDayCount = (value: number) => (Number.isInteger(value) ? String(value) : value.toFixed(1));
 
+  function openEdit() {
+    const resolved = resolveDesignationChoice(profile.designation || "LABOUR");
+    setEditDesignationChoice(resolved.choice);
+    setEditCustomDesignation(resolved.custom);
+    setEditError("");
+    setEditOpen(true);
+  }
+
+  function submitProfileEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setEditError("");
+    const form = new FormData(event.currentTarget);
+    let designation = editDesignationChoice;
+    if (editDesignationChoice === CUSTOM_DESIGNATION_VALUE) {
+      designation = editCustomDesignation.trim();
+      if (!designation) {
+        setEditError("Enter a new role name.");
+        return;
+      }
+    }
+    updateWorker.mutate({
+      full_name: String(form.get("full_name") ?? "").trim(),
+      mobile_number: String(form.get("mobile_number") ?? "").trim(),
+      salary: String(form.get("salary") ?? "") || "0",
+      daily_salary: String(form.get("daily_salary") ?? "") || null,
+      designation,
+      status: String(form.get("status") ?? "ACTIVE") as "ACTIVE" | "INACTIVE",
+      joining_date: String(form.get("joining_date") ?? "") || null,
+    });
+  }
+
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -926,6 +1301,9 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
           Back to employee list
         </Link>
         <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className={btnSecondaryClass} onClick={openEdit}>
+            Edit Employee
+          </button>
           <Link href={`/workers/${workerId}/history`} className={btnSecondaryClass}>
             <History className="h-4 w-4" />
             View Attendance History
@@ -1200,6 +1578,105 @@ export function WorkerProfilePage({ workerId }: { workerId: number }) {
           </div>
         </div>
       </div>
+
+      <Modal
+        open={editOpen}
+        title="Edit Employee"
+        subtitle={`Update ${profile.full_name}`}
+        onClose={() => {
+          setEditOpen(false);
+          setEditError("");
+        }}
+        footer={
+          <>
+            <button
+              type="button"
+              className={btnSecondaryClass}
+              onClick={() => {
+                setEditOpen(false);
+                setEditError("");
+              }}
+            >
+              Cancel
+            </button>
+            <button type="submit" form="edit-profile-form" className={btnPrimaryClass} disabled={updateWorker.isPending}>
+              {updateWorker.isPending ? "Saving..." : "Save changes"}
+            </button>
+          </>
+        }
+      >
+        <form id="edit-profile-form" onSubmit={submitProfileEdit}>
+          {editError && (
+            <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{editError}</p>
+          )}
+          <FormRow label="Full name">
+            <input className={inputClass} name="full_name" defaultValue={profile.full_name} required />
+          </FormRow>
+          <FormRow label="Mobile">
+            <input className={inputClass} name="mobile_number" defaultValue={profile.mobile_number ?? ""} />
+          </FormRow>
+          <FormRow label="Monthly salary">
+            <input
+              className={inputClass}
+              name="salary"
+              type="number"
+              min="0"
+              step="0.01"
+              defaultValue={salaryProfile?.monthly_salary ?? profile.salary ?? "0"}
+            />
+          </FormRow>
+          <FormRow label="Per day salary">
+            <input
+              className={inputClass}
+              name="daily_salary"
+              type="number"
+              min="0"
+              step="0.01"
+              defaultValue={salaryProfile?.daily_wage ?? profile.daily_salary ?? ""}
+              placeholder="Optional — else monthly ÷ 26"
+            />
+          </FormRow>
+          <FormRow label="Designation / Role">
+            <select
+              className={inputClass}
+              value={editDesignationChoice}
+              onChange={(e) => setEditDesignationChoice(e.target.value)}
+            >
+              {BUILTIN_DESIGNATIONS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+              {profile.designation &&
+              !BUILTIN_DESIGNATIONS.some((item) => item.value === profile.designation) ? (
+                <option value={profile.designation}>{designationLabel(profile.designation)}</option>
+              ) : null}
+              <option value={CUSTOM_DESIGNATION_VALUE}>+ Add new role…</option>
+            </select>
+          </FormRow>
+          {editDesignationChoice === CUSTOM_DESIGNATION_VALUE ? (
+            <FormRow label="New role name">
+              <input
+                className={inputClass}
+                value={editCustomDesignation}
+                onChange={(e) => setEditCustomDesignation(e.target.value)}
+                placeholder="e.g. Mason, Electrician, Welder"
+                required
+                autoFocus
+              />
+            </FormRow>
+          ) : null}
+          <FormRow label="Joining date">
+            <input className={inputClass} name="joining_date" type="date" defaultValue={profile.joining_date ?? ""} />
+          </FormRow>
+          <FormRow label="Status">
+            <select className={inputClass} name="status" defaultValue={profile.status}>
+              <option value="ACTIVE">Active</option>
+              <option value="INACTIVE">Inactive</option>
+            </select>
+          </FormRow>
+        </form>
+      </Modal>
     </section>
   );
 }
@@ -1487,7 +1964,11 @@ export function BulkAttendancePage() {
 export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const user = useAppSelector((state) => state.auth.user);
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
   const [message, setMessage] = useState("");
+  const [editOpen, setEditOpen] = useState(false);
+  const [editError, setEditError] = useState("");
   const now = new Date();
   const [calendarMonth, setCalendarMonth] = useState(now.getMonth() + 1);
   const [calendarYear, setCalendarYear] = useState(now.getFullYear());
@@ -1502,6 +1983,12 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
     queryFn: () => api.monthlyAttendance(calendarMonth, calendarYear, supervisorId),
   });
 
+  const projects = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.projects,
+    enabled: isSuperAdmin && editOpen,
+  });
+
   const deleteSupervisor = useMutation({
     mutationFn: () => api.deleteUser(supervisorId),
     onSuccess: () => {
@@ -1509,6 +1996,19 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
       router.push("/workers");
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Remove failed."),
+  });
+
+  const updateSupervisor = useMutation({
+    mutationFn: (payload: Parameters<typeof api.updateUser>[1]) => api.updateUser(supervisorId, payload),
+    onSuccess: () => {
+      setMessage("Supervisor updated.");
+      setEditOpen(false);
+      setEditError("");
+      queryClient.invalidateQueries({ queryKey: ["supervisor-profile", supervisorId] });
+      queryClient.invalidateQueries({ queryKey: ["supervisors"] });
+      queryClient.invalidateQueries({ queryKey: ["salary-profiles"] });
+    },
+    onError: (err) => setEditError(err instanceof Error ? err.message : "Update failed."),
   });
 
   if (summary.isLoading) return <p className="rounded-lg border border-gray-200/80 bg-white p-4 text-sm text-gray-500 shadow-sm">Loading...</p>;
@@ -1524,6 +2024,48 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
   const assignedSiteLabel = assignedProjects.length
     ? assignedProjects.map((p) => (p.code ? `${p.code} · ${p.name}` : p.name)).join(" | ")
     : null;
+  const projectList = projects.data?.results ?? [];
+
+  async function submitSupervisorEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!isSuperAdmin) return;
+    setEditError("");
+    const form = new FormData(event.currentTarget);
+    const projectField = String(form.get("project") ?? "");
+    const projectId = projectField ? Number(projectField) : null;
+    const currentProjectId = assignedProjects.length === 1 ? assignedProjects[0].id : null;
+
+    try {
+      await updateSupervisor.mutateAsync({
+        full_name: String(form.get("full_name") ?? "").trim(),
+        mobile_number: String(form.get("mobile_number") ?? "").trim(),
+        salary: String(form.get("salary") ?? "") || "0",
+        daily_salary: String(form.get("daily_salary") ?? "") || null,
+      });
+      if (projectId !== currentProjectId) {
+        const field = "supervisors" as const;
+        const working: Project[] = (projects.data?.results ?? []).map((project) => ({
+          ...project,
+          labours: [...(project.labours ?? [])],
+          supervisors: [...(project.supervisors ?? [])],
+        }));
+        for (const project of working) {
+          const current = project[field];
+          const shouldHave = projectId !== null && project.id === projectId;
+          const next = shouldHave ? [supervisorId] : current.filter((id) => id !== supervisorId);
+          const unchanged =
+            next.length === current.length && next.every((id, index) => id === current[index]);
+          if (unchanged) continue;
+          await api.updateProject(project.id, { [field]: next });
+        }
+        queryClient.invalidateQueries({ queryKey: ["projects"] });
+        queryClient.invalidateQueries({ queryKey: ["supervisor-profile", supervisorId] });
+        queryClient.invalidateQueries({ queryKey: ["supervisors"] });
+      }
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Update failed.");
+    }
+  }
 
   return (
     <section className="space-y-4">
@@ -1532,18 +2074,25 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-60"
-          disabled={deleteSupervisor.isPending}
-          onClick={() => {
-            if (!window.confirm(`Remove ${profile.full_name}? This cannot be undone.`)) return;
-            deleteSupervisor.mutate();
-          }}
-        >
-          <Trash2 className="h-4 w-4" />
-          {deleteSupervisor.isPending ? "Removing..." : "Remove Supervisor"}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {isSuperAdmin ? (
+            <button type="button" className={btnSecondaryClass} onClick={() => { setEditError(""); setEditOpen(true); }}>
+              Edit Supervisor
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-60"
+            disabled={deleteSupervisor.isPending}
+            onClick={() => {
+              if (!window.confirm(`Remove ${profile.full_name}? This cannot be undone.`)) return;
+              deleteSupervisor.mutate();
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+            {deleteSupervisor.isPending ? "Removing..." : "Remove Supervisor"}
+          </button>
+        </div>
       </div>
 
       {message && <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{message}</p>}
@@ -1592,6 +2141,85 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
           </div>
         </div>
       </div>
+
+      {isSuperAdmin ? (
+        <Modal
+          open={editOpen}
+          title="Edit Supervisor"
+          subtitle={`Update ${profile.full_name}`}
+          onClose={() => {
+            setEditOpen(false);
+            setEditError("");
+          }}
+          footer={
+            <>
+              <button
+                type="button"
+                className={btnSecondaryClass}
+                onClick={() => {
+                  setEditOpen(false);
+                  setEditError("");
+                }}
+              >
+                Cancel
+              </button>
+              <button type="submit" form="edit-supervisor-form" className={btnPrimaryClass} disabled={updateSupervisor.isPending}>
+                {updateSupervisor.isPending ? "Saving..." : "Save changes"}
+              </button>
+            </>
+          }
+        >
+          <form id="edit-supervisor-form" key={supervisorId} onSubmit={submitSupervisorEdit}>
+            {editError && (
+              <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{editError}</p>
+            )}
+            <FormRow label="Full name">
+              <input className={inputClass} name="full_name" defaultValue={profile.full_name} required />
+            </FormRow>
+            <FormRow label="Mobile">
+              <input className={inputClass} name="mobile_number" defaultValue={profile.mobile_number ?? ""} />
+            </FormRow>
+            <FormRow label="Monthly salary">
+              <input
+                className={inputClass}
+                name="salary"
+                type="number"
+                min="0"
+                step="0.01"
+                defaultValue={salaryProfile?.monthly_salary ?? "0"}
+              />
+            </FormRow>
+            <FormRow label="Per day salary">
+              <input
+                className={inputClass}
+                name="daily_salary"
+                type="number"
+                min="0"
+                step="0.01"
+                defaultValue={salaryProfile?.daily_wage ?? ""}
+                placeholder="Optional — else monthly ÷ 26"
+              />
+            </FormRow>
+            <FormRow label="Designation">
+              <input className={inputClass} value="Supervisor" disabled readOnly />
+            </FormRow>
+            <FormRow label="Site">
+              <select
+                className={inputClass}
+                name="project"
+                defaultValue={assignedProjects.length === 1 ? String(assignedProjects[0].id) : ""}
+              >
+                <option value="">No site (optional)</option>
+                {projectList.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.code ? `${project.code} · ${project.name}` : project.name}
+                  </option>
+                ))}
+              </select>
+            </FormRow>
+          </form>
+        </Modal>
+      ) : null}
     </section>
   );
 }

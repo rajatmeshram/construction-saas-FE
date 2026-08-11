@@ -27,6 +27,11 @@ import { useAppSelector } from "@/store/hooks";
 
 type Paginated<T> = { results?: T[] };
 
+function localTodayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function formatCurrency(value?: string | number | null) {
   const amount = Number(value ?? 0);
   return new Intl.NumberFormat("en-IN", {
@@ -249,10 +254,10 @@ export function RecordAdvancePage() {
   const [message, setMessage] = useState("");
   const [exporting, setExporting] = useState(false);
   const today = new Date();
-  const defaultFrom = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
-  const defaultTo = today.toISOString().slice(0, 10);
+  const todayIso = localTodayIso();
+  const defaultFrom = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-01`;
   const [historyFrom, setHistoryFrom] = useState(defaultFrom);
-  const [historyTo, setHistoryTo] = useState(defaultTo);
+  const [historyTo, setHistoryTo] = useState(todayIso);
   const { wageUsers, isSuperAdmin } = usePayrollEmployees();
 
   const recentAdvances = useQuery({
@@ -349,7 +354,14 @@ export function RecordAdvancePage() {
             <input className={inputClass} name="amount" min="0" step="0.01" type="number" required />
           </Field>
           <Field label="Date">
-            <input className={inputClass} name="date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} />
+            <input
+              className={inputClass}
+              name="date"
+              type="date"
+              required
+              max={todayIso}
+              defaultValue={todayIso}
+            />
           </Field>
           <Field label="Reason">
             <input className={inputClass} name="reason" />
@@ -414,7 +426,8 @@ export function RecordAdvancePage() {
                   className={`${inputClass} mt-1 py-1.5 text-sm`}
                   type="date"
                   value={historyFrom}
-                  onChange={(e) => setHistoryFrom(e.target.value)}
+                  max={todayIso}
+                  onChange={(e) => setHistoryFrom(e.target.value > todayIso ? todayIso : e.target.value)}
                 />
               </label>
               <label className="block">
@@ -423,7 +436,8 @@ export function RecordAdvancePage() {
                   className={`${inputClass} mt-1 py-1.5 text-sm`}
                   type="date"
                   value={historyTo}
-                  onChange={(e) => setHistoryTo(e.target.value)}
+                  max={todayIso}
+                  onChange={(e) => setHistoryTo(e.target.value > todayIso ? todayIso : e.target.value)}
                 />
               </label>
               <button
@@ -493,6 +507,7 @@ export function PayrollManager() {
   const { wageUsers } = usePayrollEmployees();
   const [message, setMessage] = useState("");
   const [rangeMessage, setRangeMessage] = useState("");
+  const todayIso = localTodayIso();
   const [weekEnd, setWeekEnd] = useState(mostRecentTuesdayISO());
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
@@ -601,7 +616,11 @@ export function PayrollManager() {
                 className={inputClass}
                 type="date"
                 value={weekEnd}
-                onChange={(event) => setWeekEnd(event.target.value)}
+                max={todayIso}
+                onChange={(event) => {
+                  const next = event.target.value > todayIso ? todayIso : event.target.value;
+                  setWeekEnd(next);
+                }}
                 required
               />
             </Field>
@@ -635,7 +654,11 @@ export function PayrollManager() {
                 className={inputClass}
                 type="date"
                 value={periodStart}
-                onChange={(event) => setPeriodStart(event.target.value)}
+                max={todayIso}
+                onChange={(event) => {
+                  const next = event.target.value > todayIso ? todayIso : event.target.value;
+                  setPeriodStart(next);
+                }}
                 required
               />
             </Field>
@@ -644,7 +667,11 @@ export function PayrollManager() {
                 className={inputClass}
                 type="date"
                 value={periodEnd}
-                onChange={(event) => setPeriodEnd(event.target.value)}
+                max={todayIso}
+                onChange={(event) => {
+                  const next = event.target.value > todayIso ? todayIso : event.target.value;
+                  setPeriodEnd(next);
+                }}
                 required
               />
             </Field>

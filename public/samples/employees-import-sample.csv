@@ -1,0 +1,6 @@
+full_name,mobile_number,salary,daily_salary,designation,status,joining_date,email,employee_id,username,password
+Ramesh Kumar,,,,,,,
+Suresh Patel,9876543211,16500,,LABOUR,ACTIVE,2026-02-01,,,,
+Amit Driver,,0,500,DRIVER,,,,,,
+Priya Office,9876543213,20000,769,OFFICE_STAFF,ACTIVE,2026-01-20,priya@example.com,,,
+Vikram Mason,,,,Mason,,,,,,

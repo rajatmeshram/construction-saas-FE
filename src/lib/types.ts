@@ -93,7 +93,7 @@ export type LabourProfile = {
   username: string;
   email: string;
   employee_id: string | null;
-  designation: "LABOUR" | "DRIVER" | "OFFICE_STAFF";
+  designation: string;
   salary: string;
   daily_salary: string | null;
   resolved_daily_wage: string;

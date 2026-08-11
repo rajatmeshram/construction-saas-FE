@@ -2048,9 +2048,10 @@ function AttendanceManager() {
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
 
   const today = new Date();
+  const todayLocalKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   const [calendarMonth, setCalendarMonth] = useState(today.getMonth());
   const [calendarYear, setCalendarYear] = useState(today.getFullYear());
-  const [selectedDates, setSelectedDates] = useState<string[]>([today.toISOString().slice(0, 10)]);
+  const [selectedDates, setSelectedDates] = useState<string[]>([todayLocalKey]);
   const [selected, setSelected] = useState<number[]>([]);
   const [workdayValue, setWorkdayValue] = useState(1);
   const [message, setMessage] = useState("");
@@ -2094,7 +2095,14 @@ function AttendanceManager() {
       id: worker.user_id,
       full_name: worker.full_name || worker.username,
       mobile_number: worker.mobile_number,
-      designation: worker.designation === "DRIVER" ? "Driver" : worker.designation === "OFFICE_STAFF" ? "Office Staff" : "Labour",
+      designation:
+        worker.designation === "DRIVER"
+          ? "Driver"
+          : worker.designation === "OFFICE_STAFF"
+            ? "Office Staff"
+            : worker.designation === "LABOUR"
+              ? "Labour"
+              : worker.designation || "Labour",
       assigned_projects: worker.assigned_projects ?? [],
     }));
     if (!isSuperAdmin) return workerRows;
@@ -2138,6 +2146,7 @@ function AttendanceManager() {
 
   const payrollWeek = useMemo(() => payrollWeekForOffset(weekOffset), [weekOffset]);
   const weekDayKeys = useMemo(() => payrollWeek.days.map((d) => d.key), [payrollWeek.days]);
+  const canGoNextPayrollWeek = payrollWeekForOffset(weekOffset + 1).weekStart <= todayLocalKey;
   const attendancePopupEmployee = useMemo(
     () => (expandedAttendanceId == null ? null : labourRows.find((row) => row.id === expandedAttendanceId) ?? null),
     [expandedAttendanceId, labourRows],
@@ -2145,6 +2154,7 @@ function AttendanceManager() {
 
   const allPayrollWeek = useMemo(() => payrollWeekForOffset(allWeekOffset), [allWeekOffset]);
   const allWeekDayKeys = useMemo(() => allPayrollWeek.days.map((d) => d.key), [allPayrollWeek.days]);
+  const canGoNextAllWeek = payrollWeekForOffset(allWeekOffset + 1).weekStart <= todayLocalKey;
 
   const allWeekFilteredRows = useMemo(() => {
     const name = allWeekNameFilter.trim().toLowerCase();
@@ -2259,18 +2269,35 @@ function AttendanceManager() {
     month: "long",
     year: "numeric",
   });
+  const todayKey = todayLocalKey;
+  const canGoNextMonth =
+    calendarYear < today.getFullYear() ||
+    (calendarYear === today.getFullYear() && calendarMonth < today.getMonth());
 
   function toDateKey(day: number) {
     return `${calendarYear}-${String(calendarMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
   }
 
+  function isDateSelectable(day: number) {
+    return toDateKey(day) <= todayKey;
+  }
+
   function toggleDate(day: number) {
+    if (!isDateSelectable(day)) return;
     const key = toDateKey(day);
     setSelectedDates((prev) => (prev.includes(key) ? prev.filter((d) => d !== key) : [...prev, key].sort()));
   }
 
   function shiftMonth(delta: number) {
+    if (delta > 0 && !canGoNextMonth) return;
     const next = new Date(calendarYear, calendarMonth + delta, 1);
+    // Do not navigate into a future month.
+    if (
+      next.getFullYear() > today.getFullYear() ||
+      (next.getFullYear() === today.getFullYear() && next.getMonth() > today.getMonth())
+    ) {
+      return;
+    }
     setCalendarMonth(next.getMonth());
     setCalendarYear(next.getFullYear());
   }
@@ -2576,7 +2603,12 @@ function AttendanceManager() {
                   ‹
                 </button>
                 <p className="min-w-[7.5rem] text-center text-xs font-semibold text-coal">{monthLabel}</p>
-                <button type="button" className="rounded-md border border-gray-200 px-2 py-0.5 text-xs font-medium text-coal hover:bg-gray-50" onClick={() => shiftMonth(1)}>
+                <button
+                  type="button"
+                  className="rounded-md border border-gray-200 px-2 py-0.5 text-xs font-medium text-coal hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => shiftMonth(1)}
+                  disabled={!canGoNextMonth}
+                >
                   ›
                 </button>
               </div>
@@ -2596,13 +2628,19 @@ function AttendanceManager() {
                 const day = index + 1;
                 const key = toDateKey(day);
                 const active = selectedDates.includes(key);
+                const enabled = isDateSelectable(day);
                 return (
                   <button
                     key={key}
                     type="button"
+                    disabled={!enabled}
                     onClick={() => toggleDate(day)}
                     className={`flex h-7 items-center justify-center rounded text-xs font-semibold transition ${
-                      active ? "bg-violet-600 text-white" : "bg-gray-50 text-coal hover:bg-violet-50"
+                      !enabled
+                        ? "cursor-not-allowed bg-gray-50 text-gray-300"
+                        : active
+                          ? "bg-violet-600 text-white"
+                          : "bg-gray-50 text-coal hover:bg-violet-50"
                     }`}
                   >
                     {day}
@@ -2741,8 +2779,9 @@ function AttendanceManager() {
             <p className="min-w-[9rem] text-center text-sm font-semibold text-coal">{payrollWeek.rangeLabel}</p>
             <button
               type="button"
-              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-coal hover:bg-gray-50"
+              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-coal hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
               onClick={() => setWeekOffset((v) => v + 1)}
+              disabled={!canGoNextPayrollWeek}
             >
               Next
               <ChevronRight className="h-3.5 w-3.5" />
@@ -2782,7 +2821,7 @@ function AttendanceManager() {
         open={allWeekOpen}
         wide
         title="All employee week attendance"
-        subtitle="Wed–Tue payroll week · filter and browse previous or upcoming weeks"
+        subtitle="Wed–Tue payroll week · filter and browse previous weeks"
         onClose={() => {
           setAllWeekOpen(false);
           setAllWeekOffset(0);
@@ -2837,8 +2876,9 @@ function AttendanceManager() {
             <p className="min-w-[9rem] text-center text-sm font-semibold text-coal">{allPayrollWeek.rangeLabel}</p>
             <button
               type="button"
-              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-coal hover:bg-gray-50"
+              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-coal hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
               onClick={() => setAllWeekOffset((v) => v + 1)}
+              disabled={!canGoNextAllWeek}
             >
               Next
               <ChevronRight className="h-3.5 w-3.5" />
@@ -2915,7 +2955,7 @@ function isExpired(date?: string | null) {
   return days != null && days < 0;
 }
 
-type MachineryComplianceKey = "all" | "insurance" | "permit" | "fitness" | "puc" | "green_tax" | "hsrp";
+type MachineryComplianceKey = "all" | "insurance" | "permit" | "fitness" | "puc" | "mv_tax" | "green_tax" | "hsrp";
 type MachineryExpiryKey = "upcoming" | "expired" | "any" | "all";
 
 function machineryComplianceDate(item: Machinery, key: Exclude<MachineryComplianceKey, "all" | "hsrp">) {
@@ -2928,6 +2968,8 @@ function machineryComplianceDate(item: Machinery, key: Exclude<MachineryComplian
       return item.fitness_validity_date;
     case "puc":
       return item.puc_date;
+    case "mv_tax":
+      return item.mv_tax_validity_date;
     case "green_tax":
       return item.green_tax_date;
   }
@@ -2941,7 +2983,7 @@ function matchesMachineryCompliance(item: Machinery, compliance: MachineryCompli
   }
 
   const dateFields: Array<Exclude<MachineryComplianceKey, "all" | "hsrp">> =
-    compliance === "all" ? ["insurance", "permit", "fitness", "puc", "green_tax"] : [compliance];
+    compliance === "all" ? ["insurance", "permit", "fitness", "puc", "mv_tax", "green_tax"] : [compliance];
 
   if (expiry === "all") {
     if (compliance === "all") return true;
@@ -3540,6 +3582,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                         <option value="permit">Permit</option>
                         <option value="fitness">Fitness</option>
                         <option value="puc">PUC</option>
+                        <option value="mv_tax">MV tax</option>
                         <option value="green_tax">Green tax</option>
                         <option value="hsrp">HSRP</option>
                       </select>
@@ -3601,6 +3644,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                       <th className="px-4 py-2.5">Permit</th>
                       <th className="px-4 py-2.5">Fitness</th>
                       <th className="px-4 py-2.5">PUC</th>
+                      <th className="px-4 py-2.5">MV tax</th>
                       <th className="px-4 py-2.5">Green tax</th>
                       <th className="px-4 py-2.5">HSRP</th>
                       <th className="px-4 py-2.5">Status</th>
@@ -3654,6 +3698,12 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                         </DataTableCell>
                         <DataTableCell>
                           <div className="flex flex-col items-start gap-1">
+                            <span className="text-xs text-gray-600">{formatShortDate(item.mv_tax_validity_date)}</span>
+                            {item.mv_tax_validity_date && <Badge tone={expiryBadgeTone(item.mv_tax_validity_date)}>{expiryBadgeTone(item.mv_tax_validity_date) === "red" ? "Expired" : expiryBadgeTone(item.mv_tax_validity_date) === "amber" ? "Soon" : "OK"}</Badge>}
+                          </div>
+                        </DataTableCell>
+                        <DataTableCell>
+                          <div className="flex flex-col items-start gap-1">
                             <span className="text-xs text-gray-600">{formatShortDate(item.green_tax_date)}</span>
                             {item.green_tax_date && <Badge tone={expiryBadgeTone(item.green_tax_date)}>{expiryBadgeTone(item.green_tax_date) === "red" ? "Expired" : expiryBadgeTone(item.green_tax_date) === "amber" ? "Soon" : "OK"}</Badge>}
                           </div>
@@ -3690,7 +3740,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                     ))}
                     {!filteredMachineryList.length && (
                       <tr>
-                        <td colSpan={11} className="px-4 py-10 text-center text-sm text-gray-500">
+                        <td colSpan={13} className="px-4 py-10 text-center text-sm text-gray-500">
                           {machineryList.length
                             ? "No machines match these expiry filters."
                             : "No machinery registered yet."}

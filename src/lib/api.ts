@@ -281,6 +281,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  updateUser: (
+    id: number,
+    payload: Partial<{
+      full_name: string;
+      first_name: string;
+      last_name: string;
+      email: string;
+      mobile_number: string;
+      salary: string;
+      daily_salary: string | null;
+      is_active_worker: boolean;
+    }>,
+  ) =>
+    request<AuthUser>(`/accounts/users/${id}/`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   deleteUser: (id: number) => request<void>(`/accounts/users/${id}/`, { method: "DELETE" }),
   bulkDeleteSupervisors: (ids: number[]) =>
     request<{
@@ -777,7 +794,7 @@ export const api = {
   labourWorkers: (params?: {
     name?: string;
     mobile?: string;
-    designation?: "LABOUR" | "DRIVER" | "OFFICE_STAFF";
+    designation?: string;
     page?: number;
     page_size?: number;
     ordering?: string;
@@ -808,7 +825,7 @@ export const api = {
     salary?: string;
     daily_salary?: string | null;
     employee_id?: string;
-    designation?: "LABOUR" | "DRIVER" | "OFFICE_STAFF";
+    designation?: string;
     status?: "ACTIVE" | "INACTIVE";
     joining_date?: string;
     username?: string;
@@ -828,9 +845,9 @@ export const api = {
       salary: string;
       daily_salary: string | null;
       employee_id: string;
-      designation: "LABOUR" | "DRIVER" | "OFFICE_STAFF";
+      designation: string;
       status: "ACTIVE" | "INACTIVE";
-      joining_date: string;
+      joining_date: string | null;
     }>,
   ) =>
     request<LabourProfile>(`/labour/workers/${id}/`, {
