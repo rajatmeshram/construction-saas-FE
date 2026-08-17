@@ -78,6 +78,70 @@ function mediaUrl(url?: string | null) {
   return `${origin}${url.startsWith("/") ? url : `/${url}`}`;
 }
 
+function PhotoThumbs({ images }: { images?: { id: number; image_url: string }[] }) {
+  if (!images?.length) return <span className="text-gray-400">—</span>;
+  return (
+    <div className="flex gap-1">
+      {images.slice(0, 3).map((photo) => {
+        const href = mediaUrl(photo.image_url);
+        if (!href) return null;
+        return (
+          <a key={photo.id} href={href} target="_blank" rel="noopener noreferrer">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={href} alt="" className="h-8 w-8 rounded border border-gray-200 object-cover" />
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
+function MachineHistoryHeader({
+  title,
+  subtitle,
+  backHref,
+  backLabel,
+  selectedId,
+  machines,
+  onMachineChange,
+}: {
+  title: string;
+  subtitle: string;
+  backHref: string;
+  backLabel: string;
+  selectedId: number;
+  machines: Machinery[];
+  onMachineChange: (value: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-3">
+        <Link href={backHref} className={`${btnSecondaryClass} text-xs`}>
+          <ArrowLeft className="h-4 w-4" />
+          {backLabel}
+        </Link>
+        <div>
+          <h2 className="text-lg font-semibold text-coal">{title}</h2>
+          <p className="text-xs text-gray-500">{subtitle}</p>
+        </div>
+      </div>
+      <select
+        className={`${inputClass} max-w-sm`}
+        value={selectedId ? String(selectedId) : ""}
+        onChange={(event) => onMachineChange(event.target.value)}
+      >
+        <option value="">Select machine</option>
+        {machines.map((item) => (
+          <option key={item.id} value={item.id}>
+            {item.name}
+            {item.vehicle_number ? ` - ${item.vehicle_number}` : ""}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function expiryTone(date?: string | null): "green" | "amber" | "red" | "gray" {
   if (!date) return "gray";
   const diff = new Date(date).getTime() - Date.now();
@@ -1011,31 +1075,15 @@ export function MachineryUsageDetailHistoryPage() {
 
   return (
     <section className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Link href="/machinery/usage" className={`${btnSecondaryClass} text-xs`}>
-            <ArrowLeft className="h-4 w-4" />
-            Back to usage
-          </Link>
-          <div>
-            <h2 className="text-lg font-semibold text-coal">Usage detail history</h2>
-            <p className="text-xs text-gray-500">Fuel fill history, totals, and machine average</p>
-          </div>
-        </div>
-        <select
-          className={`${inputClass} max-w-sm`}
-          value={selectedId ? String(selectedId) : ""}
-          onChange={(event) => onMachineChange(event.target.value)}
-        >
-          <option value="">Select machine</option>
-          {machines.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-              {item.vehicle_number ? ` - ${item.vehicle_number}` : ""}
-            </option>
-          ))}
-        </select>
-      </div>
+      <MachineHistoryHeader
+        title="Usage detail history"
+        subtitle="Fuel fill history, totals, and machine average"
+        backHref="/machinery/usage"
+        backLabel="Back to usage"
+        selectedId={selectedId}
+        machines={machines}
+        onMachineChange={onMachineChange}
+      />
 
       {!selectedId && (
         <p className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-500 shadow-sm">
@@ -1102,6 +1150,178 @@ export function MachineryUsageDetailHistoryPage() {
             )}
           </div>
         </>
+      )}
+    </section>
+  );
+}
+
+function useMachineHistorySelection(basePath: string) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const selectedId = Number(searchParams.get("machine") || "") || 0;
+  const machinery = useQuery({
+    queryKey: ["machinery"],
+    queryFn: api.machinery,
+  });
+  const machines = machinery.data?.results ?? [];
+  const selected = machines.find((item) => item.id === selectedId) ?? null;
+
+  function onMachineChange(value: string) {
+    router.replace(value ? `${basePath}?machine=${value}` : basePath);
+  }
+
+  return { selectedId, machines, selected, onMachineChange };
+}
+
+export function MachineryFuelLogsHistoryPage() {
+  const { selectedId, machines, selected, onMachineChange } = useMachineHistorySelection("/machinery/fuel-logs/history");
+  const fuelLogs = useQuery({
+    queryKey: ["fuel-logs", selectedId],
+    queryFn: () => api.fuelLogs({ machinery: selectedId }),
+    enabled: selectedId > 0,
+  });
+  const rows = fuelLogs.data?.results ?? [];
+  const page = useTablePage(rows, { resetKey: selectedId });
+
+  return (
+    <section className="space-y-4">
+      <MachineHistoryHeader
+        title="Fuel log history"
+        subtitle="Fill records for the selected machine"
+        backHref="/machinery/fuel-logs"
+        backLabel="Back to fuel logs"
+        selectedId={selectedId}
+        machines={machines}
+        onMachineChange={onMachineChange}
+      />
+
+      {!selectedId && (
+        <p className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-500 shadow-sm">
+          Select a machine to view fuel log history.
+        </p>
+      )}
+
+      {selectedId > 0 && (
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <DataTable>
+            <DataTableHead>
+              <tr>
+                <th className="px-4 py-2.5">Machine</th>
+                <th className="px-4 py-2.5">Date</th>
+                <th className="px-4 py-2.5">Project</th>
+                <th className="px-4 py-2.5">Previous meter</th>
+                <th className="px-4 py-2.5">Current meter</th>
+                <th className="px-4 py-2.5">Quantity</th>
+                <th className="px-4 py-2.5">Cost</th>
+                <th className="px-4 py-2.5">Photos</th>
+              </tr>
+            </DataTableHead>
+            <DataTableBody>
+              {page.pageRows.map((item: FuelLog, i) => (
+                <DataTableRow key={item.id} zebra={i % 2 === 1}>
+                  <DataTableCell className="font-medium text-gray-900">{item.machinery_name || selected?.name || "—"}</DataTableCell>
+                  <DataTableCell>{formatDate(item.logged_date)}</DataTableCell>
+                  <DataTableCell>{item.project_name || "—"}</DataTableCell>
+                  <DataTableCell>{item.previous_meter_reading}</DataTableCell>
+                  <DataTableCell>{item.current_meter_reading}</DataTableCell>
+                  <DataTableCell>{item.fuel_quantity} L</DataTableCell>
+                  <DataTableCell>{formatCurrency(item.fuel_cost)}</DataTableCell>
+                  <DataTableCell>
+                    <PhotoThumbs images={item.images} />
+                  </DataTableCell>
+                </DataTableRow>
+              ))}
+            </DataTableBody>
+          </DataTable>
+          <TablePagination
+            page={page.page}
+            totalPages={page.totalPages}
+            total={page.total}
+            pageSize={page.pageSize}
+            from={page.from}
+            to={page.to}
+            onPageChange={page.setPage}
+          />
+          {!fuelLogs.isLoading && !rows.length && (
+            <p className="px-4 py-8 text-center text-sm text-gray-500">No fuel logs for this machine.</p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function MachineryMaintenanceHistoryPage() {
+  const { selectedId, machines, selected, onMachineChange } = useMachineHistorySelection("/machinery/maintenance/history");
+  const maintenance = useQuery({
+    queryKey: ["maintenance", selectedId],
+    queryFn: () => api.maintenance(selectedId),
+    enabled: selectedId > 0,
+  });
+  const rows = maintenance.data?.results ?? [];
+  const page = useTablePage(rows, { resetKey: selectedId });
+
+  return (
+    <section className="space-y-4">
+      <MachineHistoryHeader
+        title="Maintenance history"
+        subtitle="Service records for the selected machine"
+        backHref="/machinery/maintenance"
+        backLabel="Back to maintenance"
+        selectedId={selectedId}
+        machines={machines}
+        onMachineChange={onMachineChange}
+      />
+
+      {!selectedId && (
+        <p className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-500 shadow-sm">
+          Select a machine to view maintenance history.
+        </p>
+      )}
+
+      {selectedId > 0 && (
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <DataTable>
+            <DataTableHead>
+              <tr>
+                <th className="px-4 py-2.5">Machine</th>
+                <th className="px-4 py-2.5">Service date</th>
+                <th className="px-4 py-2.5">Service work</th>
+                <th className="px-4 py-2.5">Details</th>
+                <th className="px-4 py-2.5">Cost</th>
+                <th className="px-4 py-2.5">Next due</th>
+                <th className="px-4 py-2.5">Photos</th>
+              </tr>
+            </DataTableHead>
+            <DataTableBody>
+              {page.pageRows.map((row: MachineryMaintenance, i) => (
+                <DataTableRow key={row.id} zebra={i % 2 === 1}>
+                  <DataTableCell className="font-medium text-gray-900">{row.machinery_name || selected?.name || "—"}</DataTableCell>
+                  <DataTableCell>{formatDate(row.service_date)}</DataTableCell>
+                  <DataTableCell>{row.service_work_name || "—"}</DataTableCell>
+                  <DataTableCell>{row.details}</DataTableCell>
+                  <DataTableCell>{formatCurrency(row.cost)}</DataTableCell>
+                  <DataTableCell>{formatDate(row.next_service_due)}</DataTableCell>
+                  <DataTableCell>
+                    <PhotoThumbs images={row.images} />
+                  </DataTableCell>
+                </DataTableRow>
+              ))}
+            </DataTableBody>
+          </DataTable>
+          <TablePagination
+            page={page.page}
+            totalPages={page.totalPages}
+            total={page.total}
+            pageSize={page.pageSize}
+            from={page.from}
+            to={page.to}
+            onPageChange={page.setPage}
+          />
+          {!maintenance.isLoading && !rows.length && (
+            <p className="px-4 py-8 text-center text-sm text-gray-500">No maintenance records for this machine.</p>
+          )}
+        </div>
       )}
     </section>
   );

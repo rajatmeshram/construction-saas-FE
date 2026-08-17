@@ -3515,7 +3515,13 @@ function OperationsManager({
             {machinerySection === "fuel" && (
               <>
                 <Toolbar>
-                  <p className="text-sm text-gray-500">{fuelLogList.length} fuel entries</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link href="/machinery/fuel-logs/history" className={btnSecondaryClass}>
+                      <History className="h-4 w-4" />
+                      View history
+                    </Link>
+                    <p className="text-sm text-gray-500">{fuelLogList.length} fuel entries</p>
+                  </div>
                   <button type="button" className={btnPrimaryClass} onClick={() => setFuelModalOpen(true)}>
                     + Add Fuel Log
                   </button>
@@ -3862,7 +3868,14 @@ function OperationsManager({
             )}
 
             {machinerySection === "maintenance" && (
-              <div className="p-4">
+              <>
+                <Toolbar>
+                  <Link href="/machinery/maintenance/history" className={btnSecondaryClass}>
+                    <History className="h-4 w-4" />
+                    View history
+                  </Link>
+                </Toolbar>
+                <div className="p-4">
                 <form
                   onSubmit={(event) => {
                     event.preventDefault();
@@ -3894,6 +3907,7 @@ function OperationsManager({
                   </div>
                 </form>
               </div>
+              </>
             )}
           </div>
 

@@ -72,9 +72,11 @@ function pageTitle(pathname: string) {
   if (pathname.startsWith("/payroll/site-sheets/")) return "Site Salary Sheet";
   if (pathname.startsWith("/workers/") && pathname.endsWith("/history")) return "Attendance History";
   if (pathname.startsWith("/workers/")) return "Employee Profile";
+  if (pathname === "/machinery/fuel-logs/history") return "Fuel Log History";
   if (pathname === "/machinery/fuel-logs") return "Fuel Logs";
   if (pathname === "/machinery/usage/history") return "Usage Detail History";
   if (pathname === "/machinery/usage") return "Usage";
+  if (pathname === "/machinery/maintenance/history") return "Maintenance History";
   if (pathname === "/machinery/maintenance") return "Maintenance";
   if (pathname.startsWith("/machinery/") && pathname.endsWith("/fuel-logs")) return "Fuel Logs";
   if (pathname.startsWith("/machinery/") && pathname.endsWith("/usage")) return "Usage History";
@@ -160,9 +162,9 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                     p !== "/machinery/maintenance"),
                 children: [
                   { href: "/machinery", label: "Machines", icon: Truck, match: (p: string) => p === "/machinery" },
-                  { href: "/machinery/fuel-logs", label: "Fuel Logs", icon: Fuel, match: (p: string) => p === "/machinery/fuel-logs" },
+                  { href: "/machinery/fuel-logs", label: "Fuel Logs", icon: Fuel, match: (p: string) => p === "/machinery/fuel-logs" || p.startsWith("/machinery/fuel-logs/") },
                   { href: "/machinery/usage", label: "Usage", icon: Timer, match: (p: string) => p === "/machinery/usage" || p.startsWith("/machinery/usage/") },
-                  { href: "/machinery/maintenance", label: "Maintenance", icon: Wrench, match: (p: string) => p === "/machinery/maintenance" },
+                  { href: "/machinery/maintenance", label: "Maintenance", icon: Wrench, match: (p: string) => p === "/machinery/maintenance" || p.startsWith("/machinery/maintenance/") },
                 ],
               },
               { href: "/reports", label: "Reports", icon: ClipboardList },
