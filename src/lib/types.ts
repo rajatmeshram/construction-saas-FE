@@ -406,15 +406,15 @@ export type ProjectDocument = {
 
 export type MachineryUsage = {
   id: number;
-  project: number;
-  project_name: string;
+  project: number | null;
+  project_name: string | null;
   machinery: number;
   machinery_name: string;
   operator: string;
-  hours_used: string;
-  km_used: string;
-  fuel_consumption: string;
-  usage_date: string;
+  hours_used: string | null;
+  km_used: string | null;
+  fuel_consumption: string | null;
+  usage_date: string | null;
   avg_km_per_liter?: string | null;
   avg_hours_per_liter?: string | null;
   expected_km?: number | null;
@@ -496,6 +496,7 @@ export type Expense = {
 
 export type Machinery = NamedItem & {
   machine_type: string;
+  owner_name: string;
   registration_number: string;
   vehicle_number: string;
   vehicle_class: string;
@@ -530,12 +531,20 @@ export type MachineryDocument = {
   uploaded_at: string;
 };
 
+export type MachineryMaintenanceImage = {
+  id: number;
+  image_url: string;
+  created_at: string;
+};
+
 export type MachineryMaintenance = {
   id: number;
   machinery: number;
   machinery_name: string;
+  service_work_name: string;
   service_date: string;
   details: string;
   cost: string;
   next_service_due: string | null;
+  images: MachineryMaintenanceImage[];
 };

@@ -1,10 +1,10 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download, FileText, Fuel, Pencil, Shield, Timer, Trash2, Wrench } from "lucide-react";
+import { ArrowLeft, Banknote, Download, FileText, Fuel, Gauge, Pencil, Shield, Timer, Trash2, Wrench } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, useMemo, useState } from "react";
 
 import {
   Badge,
@@ -15,6 +15,7 @@ import {
   DataTableRow,
   FormRow,
   Modal,
+  StatCard,
   TablePagination,
   btnPrimaryClass,
   btnSecondaryClass,
@@ -24,14 +25,40 @@ import { api } from "@/lib/api";
 import { useTablePage } from "@/lib/pagination";
 import type { FuelLog, LabourProfile, Machinery, MachineryDocument, MachineryMaintenance, MachineryUsage } from "@/lib/types";
 
+function formatQty(value?: string | number | null, digits = 2) {
+  const amount = Number(value ?? 0);
+  if (Number.isNaN(amount)) return "—";
+  return amount.toLocaleString("en-IN", { maximumFractionDigits: digits, minimumFractionDigits: 0 });
+}
+
 function formatCurrency(value?: string | number | null) {
   const amount = Number(value ?? 0);
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
 }
 
+function meterAverageUnit(machine?: Machinery | null) {
+  const hasKm = Boolean(machine?.avg_km_per_liter);
+  const hasHrs = Boolean(machine?.avg_hours_per_liter);
+  if (hasKm && !hasHrs) return "km/L";
+  if (hasHrs && !hasKm) return "hrs/L";
+  return "per L";
+}
+
+function fuelFillAverage(row: FuelLog) {
+  const qty = Number(row.fuel_quantity || 0);
+  const delta = Number(row.current_meter_reading || 0) - Number(row.previous_meter_reading || 0);
+  if (qty <= 0 || delta <= 0) return null;
+  return delta / qty;
+}
+
 function formatDate(value?: string | null) {
   if (!value) return "—";
   return new Date(value).toLocaleDateString("en-IN", { dateStyle: "medium" });
+}
+
+function formatOptionalComplianceDate(value?: string | null) {
+  if (!value) return "N/A";
+  return formatDate(value);
 }
 
 function dateInputValue(value?: string | null) {
@@ -68,8 +95,8 @@ function docTypeLabel(type: MachineryDocument["document_type"]) {
 function machineryPayloadFromForm(form: FormData) {
   return {
     name: formValue(form, "name"),
+    owner_name: formValue(form, "owner_name"),
     machine_type: formValue(form, "machine_type"),
-    registration_number: formValue(form, "registration_number"),
     vehicle_number: formValue(form, "vehicle_number"),
     vehicle_class: formValue(form, "vehicle_class"),
     chassis_number: formValue(form, "chassis_number"),
@@ -100,6 +127,9 @@ function MachineryEditFields({ item, drivers }: { item: Machinery; drivers: Labo
       <FormRow label="Machine name">
         <input className={inputClass} name="name" required defaultValue={item.name} />
       </FormRow>
+      <FormRow label="Owner name">
+        <input className={inputClass} name="owner_name" defaultValue={item.owner_name || ""} />
+      </FormRow>
       <FormRow label="Type">
         <input className={inputClass} name="machine_type" defaultValue={item.machine_type} placeholder="Excavator, Truck, Crane..." />
       </FormRow>
@@ -115,9 +145,6 @@ function MachineryEditFields({ item, drivers }: { item: Machinery; drivers: Labo
       </FormRow>
       <FormRow label="Vehicle number">
         <input className={inputClass} name="vehicle_number" defaultValue={item.vehicle_number || ""} placeholder="MH-12-AB-1234" />
-      </FormRow>
-      <FormRow label="Registration number">
-        <input className={inputClass} name="registration_number" defaultValue={item.registration_number} placeholder="Auto-generated if empty" />
       </FormRow>
       <FormRow label="Vehicle class">
         <input className={inputClass} name="vehicle_class" defaultValue={item.vehicle_class || ""} placeholder="LMV, HMV, Trailer..." />
@@ -254,6 +281,16 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
     onError: (err) => setMessage(err instanceof Error ? err.message : "Upload failed."),
   });
 
+  const deleteDocument = useMutation({
+    mutationFn: (documentId: number) => api.deleteMachineryDocument(machineryId, documentId),
+    onSuccess: () => {
+      setMessage("Document deleted.");
+      queryClient.invalidateQueries({ queryKey: ["machinery", machineryId] });
+      queryClient.invalidateQueries({ queryKey: ["machinery"] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Delete failed."),
+  });
+
   function submitDocuments(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -381,12 +418,12 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
             <p className="mt-1 font-semibold">{item.driver_name || "—"}</p>
           </div>
           <div className="rounded-lg bg-gray-50 p-3">
-            <p className="text-[10px] font-bold uppercase text-gray-500">Vehicle No.</p>
-            <p className="mt-1 font-semibold">{item.vehicle_number || item.registration_number || "—"}</p>
+            <p className="text-[10px] font-bold uppercase text-gray-500">Owner</p>
+            <p className="mt-1 font-semibold">{item.owner_name || "—"}</p>
           </div>
           <div className="rounded-lg bg-gray-50 p-3">
-            <p className="text-[10px] font-bold uppercase text-gray-500">Registration</p>
-            <p className="mt-1 font-semibold">{item.registration_number || "—"}</p>
+            <p className="text-[10px] font-bold uppercase text-gray-500">Vehicle No.</p>
+            <p className="mt-1 font-semibold">{item.vehicle_number || "—"}</p>
           </div>
           <div className="rounded-lg bg-gray-50 p-3">
             <p className="text-[10px] font-bold uppercase text-gray-500">Vehicle class</p>
@@ -409,7 +446,7 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
           </div>
           <div className="rounded-lg bg-gray-50 p-3">
             <p className="text-[10px] font-bold uppercase text-gray-500">Permit validity</p>
-            <p className="mt-1 font-semibold">{formatDate(item.permit_expiry_date)}</p>
+            <p className="mt-1 font-semibold">{formatOptionalComplianceDate(item.permit_expiry_date)}</p>
             {item.permit_expiry_date && (
               <div className="mt-1">
                 <Badge tone={expiryTone(item.permit_expiry_date)}>
@@ -420,7 +457,7 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
           </div>
           <div className="rounded-lg bg-gray-50 p-3">
             <p className="text-[10px] font-bold uppercase text-gray-500">Fitness validity</p>
-            <p className="mt-1 font-semibold">{formatDate(item.fitness_validity_date)}</p>
+            <p className="mt-1 font-semibold">{formatOptionalComplianceDate(item.fitness_validity_date)}</p>
             {item.fitness_validity_date && (
               <div className="mt-1">
                 <Badge tone={expiryTone(item.fitness_validity_date)}>
@@ -450,6 +487,7 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
             <h2 className="text-sm font-semibold text-coal">Vehicle Identity</h2>
           </div>
           <dl className="mt-4 space-y-2 text-sm">
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Owner name</dt><dd className="font-medium">{item.owner_name || "—"}</dd></div>
             <div className="flex justify-between gap-4"><dt className="text-gray-500">Chassis no.</dt><dd className="font-medium">{item.chassis_number || "—"}</dd></div>
             <div className="flex justify-between gap-4"><dt className="text-gray-500">Engine no.</dt><dd className="font-medium">{item.engine_number || "—"}</dd></div>
             <div className="flex justify-between gap-4"><dt className="text-gray-500">Vehicle class</dt><dd className="font-medium">{item.vehicle_class || "—"}</dd></div>
@@ -480,7 +518,7 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
           <dl className="mt-4 space-y-2 text-sm">
             <div className="flex justify-between gap-4"><dt className="text-gray-500">Permit number</dt><dd className="font-medium">{item.permit_number || "—"}</dd></div>
             <div className="flex justify-between gap-4"><dt className="text-gray-500">Permit date</dt><dd className="font-medium">{formatDate(item.permit_issue_date)}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-gray-500">Validity</dt><dd className="font-medium">{formatDate(item.permit_expiry_date)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Validity</dt><dd className="font-medium">{formatOptionalComplianceDate(item.permit_expiry_date)}</dd></div>
           </dl>
         </div>
 
@@ -490,10 +528,10 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
             <h2 className="text-sm font-semibold text-coal">Tax & Fitness</h2>
           </div>
           <dl className="mt-4 space-y-2 text-sm">
-            <div className="flex justify-between gap-4"><dt className="text-gray-500">Fitness validity</dt><dd className="font-medium">{formatDate(item.fitness_validity_date)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Fitness validity</dt><dd className="font-medium">{formatOptionalComplianceDate(item.fitness_validity_date)}</dd></div>
             <div className="flex justify-between gap-4"><dt className="text-gray-500">PUC date</dt><dd className="font-medium">{formatDate(item.puc_date)}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-gray-500">MV tax validity</dt><dd className="font-medium">{formatDate(item.mv_tax_validity_date)}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-gray-500">Green tax date</dt><dd className="font-medium">{formatDate(item.green_tax_date)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">MV tax validity</dt><dd className="font-medium">{formatOptionalComplianceDate(item.mv_tax_validity_date)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Green tax date</dt><dd className="font-medium">{formatOptionalComplianceDate(item.green_tax_date)}</dd></div>
           </dl>
         </div>
       </div>
@@ -526,11 +564,28 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
                 <DataTableCell className="font-medium text-gray-900">{doc.title || "—"}</DataTableCell>
                 <DataTableCell>{formatDate(doc.uploaded_at)}</DataTableCell>
                 <DataTableCell>
-                  {mediaUrl(doc.file_url) ? (
-                    <a href={mediaUrl(doc.file_url)!} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-violet-700 hover:underline">
-                      View / Download
-                    </a>
-                  ) : "—"}
+                  <div className="flex items-center gap-3">
+                    {mediaUrl(doc.file_url) ? (
+                      <a href={mediaUrl(doc.file_url)!} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-violet-700 hover:underline">
+                        View / Download
+                      </a>
+                    ) : (
+                      <span>—</span>
+                    )}
+                    <button
+                      type="button"
+                      className="text-sm font-medium text-red-700 hover:underline disabled:opacity-60"
+                      disabled={deleteDocument.isPending}
+                      onClick={() => {
+                        if (!window.confirm(`Delete "${doc.title || docTypeLabel(doc.document_type)}"?`)) {
+                          return;
+                        }
+                        deleteDocument.mutate(doc.id);
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </DataTableCell>
               </DataTableRow>
             ))}
@@ -764,18 +819,39 @@ export function MachineryMaintenancePage({ machineryId }: { machineryId: number 
           <DataTableHead>
             <tr>
               <th className="px-4 py-2.5">Service date</th>
+              <th className="px-4 py-2.5">Service work</th>
               <th className="px-4 py-2.5">Details</th>
               <th className="px-4 py-2.5">Cost</th>
               <th className="px-4 py-2.5">Next due</th>
+              <th className="px-4 py-2.5">Photos</th>
             </tr>
           </DataTableHead>
           <DataTableBody>
             {page.pageRows.map((row: MachineryMaintenance, i) => (
               <DataTableRow key={row.id} zebra={i % 2 === 1}>
                 <DataTableCell>{formatDate(row.service_date)}</DataTableCell>
+                <DataTableCell className="font-medium text-gray-900">{row.service_work_name || "—"}</DataTableCell>
                 <DataTableCell>{row.details}</DataTableCell>
                 <DataTableCell>{formatCurrency(row.cost)}</DataTableCell>
                 <DataTableCell>{formatDate(row.next_service_due)}</DataTableCell>
+                <DataTableCell>
+                  {row.images?.length ? (
+                    <div className="flex gap-1">
+                      {row.images.slice(0, 3).map((photo) => {
+                        const href = mediaUrl(photo.image_url);
+                        if (!href) return null;
+                        return (
+                          <a key={photo.id} href={href} target="_blank" rel="noopener noreferrer">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={href} alt="" className="h-8 w-8 rounded border border-gray-200 object-cover" />
+                          </a>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    "—"
+                  )}
+                </DataTableCell>
               </DataTableRow>
             ))}
           </DataTableBody>
@@ -865,9 +941,9 @@ export function MachineryUsagePage({ machineryId }: { machineryId: number }) {
                 <DataTableCell>{formatDate(item.usage_date)}</DataTableCell>
                 <DataTableCell>{item.project_name || "—"}</DataTableCell>
                 <DataTableCell>{item.operator || "—"}</DataTableCell>
-                <DataTableCell>{item.hours_used}</DataTableCell>
-                <DataTableCell>{item.km_used}</DataTableCell>
-                <DataTableCell>{item.fuel_consumption}</DataTableCell>
+                <DataTableCell>{item.hours_used ?? "—"}</DataTableCell>
+                <DataTableCell>{item.km_used ?? "—"}</DataTableCell>
+                <DataTableCell>{item.fuel_consumption ?? "—"}</DataTableCell>
               </DataTableRow>
             ))}
           </DataTableBody>
@@ -885,6 +961,148 @@ export function MachineryUsagePage({ machineryId }: { machineryId: number }) {
           <p className="px-4 py-8 text-center text-sm text-gray-500">No usage records for this machine.</p>
         )}
       </div>
+    </section>
+  );
+}
+
+export function MachineryUsageDetailHistoryPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const selectedId = Number(searchParams.get("machine") || "") || 0;
+
+  const machinery = useQuery({
+    queryKey: ["machinery"],
+    queryFn: api.machinery,
+  });
+  const machines = machinery.data?.results ?? [];
+  const selected = machines.find((item) => item.id === selectedId) ?? null;
+
+  const fuelLogs = useQuery({
+    queryKey: ["fuel-logs", selectedId],
+    queryFn: () => api.fuelLogs({ machinery: selectedId }),
+    enabled: selectedId > 0,
+  });
+
+  const rows = fuelLogs.data?.results ?? [];
+  const page = useTablePage(rows, { resetKey: selectedId });
+  const unit = meterAverageUnit(selected);
+
+  const summary = useMemo(() => {
+    let totalLiters = 0;
+    let totalCost = 0;
+    let totalDelta = 0;
+    for (const row of rows) {
+      const qty = Number(row.fuel_quantity || 0);
+      totalLiters += qty;
+      totalCost += Number(row.fuel_cost || 0);
+      const delta = Number(row.current_meter_reading || 0) - Number(row.previous_meter_reading || 0);
+      if (qty > 0 && delta > 0) totalDelta += delta;
+    }
+    return {
+      totalLiters,
+      totalCost,
+      average: totalLiters > 0 && totalDelta > 0 ? totalDelta / totalLiters : null,
+    };
+  }, [rows]);
+
+  function onMachineChange(value: string) {
+    router.replace(value ? `/machinery/usage/history?machine=${value}` : "/machinery/usage/history");
+  }
+
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Link href="/machinery/usage" className={`${btnSecondaryClass} text-xs`}>
+            <ArrowLeft className="h-4 w-4" />
+            Back to usage
+          </Link>
+          <div>
+            <h2 className="text-lg font-semibold text-coal">Usage detail history</h2>
+            <p className="text-xs text-gray-500">Fuel fill history, totals, and machine average</p>
+          </div>
+        </div>
+        <select
+          className={`${inputClass} max-w-sm`}
+          value={selectedId ? String(selectedId) : ""}
+          onChange={(event) => onMachineChange(event.target.value)}
+        >
+          <option value="">Select machine</option>
+          {machines.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+              {item.vehicle_number ? ` - ${item.vehicle_number}` : ""}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {!selectedId && (
+        <p className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-500 shadow-sm">
+          Select a machine to view fuel fill history.
+        </p>
+      )}
+
+      {selectedId > 0 && (
+        <>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <StatCard icon={Fuel} label="Total diesel/petrol filled" value={`${formatQty(summary.totalLiters)} L`} />
+            <StatCard icon={Banknote} label="Total fuel cost" value={formatCurrency(summary.totalCost)} />
+            <StatCard
+              icon={Gauge}
+              label={`Machine average (${unit})`}
+              value={summary.average != null ? formatQty(summary.average) : "—"}
+            />
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+            <DataTable>
+              <DataTableHead>
+                <tr>
+                  <th className="px-4 py-2.5">Machine</th>
+                  <th className="px-4 py-2.5">Date of fuel filling</th>
+                  <th className="px-4 py-2.5">Meter reading at filling</th>
+                  <th className="px-4 py-2.5">Diesel quantity (L)</th>
+                  <th className="px-4 py-2.5">Average ({unit})</th>
+                  <th className="px-4 py-2.5">Fuel cost</th>
+                </tr>
+              </DataTableHead>
+              <DataTableBody>
+                {page.pageRows.map((row: FuelLog, i) => {
+                  const avg = fuelFillAverage(row);
+                  return (
+                    <DataTableRow key={row.id} zebra={i % 2 === 1}>
+                      <DataTableCell className="font-medium text-gray-900">
+                        {row.machinery_name || selected?.name || "—"}
+                      </DataTableCell>
+                      <DataTableCell>{formatDate(row.logged_date)}</DataTableCell>
+                      <DataTableCell>
+                        <p>{row.current_meter_reading}</p>
+                        <p className="text-xs text-gray-500">prev {row.previous_meter_reading}</p>
+                      </DataTableCell>
+                      <DataTableCell>{formatQty(row.fuel_quantity)} L</DataTableCell>
+                      <DataTableCell>{avg != null ? formatQty(avg) : "—"}</DataTableCell>
+                      <DataTableCell>{formatCurrency(row.fuel_cost)}</DataTableCell>
+                    </DataTableRow>
+                  );
+                })}
+              </DataTableBody>
+            </DataTable>
+            <TablePagination
+              page={page.page}
+              totalPages={page.totalPages}
+              total={page.total}
+              pageSize={page.pageSize}
+              from={page.from}
+              to={page.to}
+              onPageChange={page.setPage}
+            />
+            {!fuelLogs.isLoading && !rows.length && (
+              <p className="px-4 py-8 text-center text-sm text-gray-500">No fuel fill records for this machine.</p>
+            )}
+          </div>
+        </>
+      )}
     </section>
   );
 }

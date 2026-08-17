@@ -6,6 +6,7 @@ import {
   Building2,
   ClipboardList,
   Factory,
+  Fuel,
   HardHat,
   LogOut,
   Minus,
@@ -16,6 +17,7 @@ import {
   Truck,
   Users,
   Wallet,
+  Wrench,
   IndianRupee,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -28,7 +30,7 @@ import { pageBg } from "@/components/ui";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearSession } from "@/store/auth-slice";
 
-type NavChild = { href: string; label: string; match?: (path: string) => boolean };
+type NavChild = { href: string; label: string; icon?: LucideIcon; match?: (path: string) => boolean };
 type NavItem = {
   href: string;
   label: string;
@@ -45,6 +47,9 @@ const PAGE_TITLES: Record<string, string> = {
   "/vendors": "Vendors",
   "/expenses": "Expenses",
   "/machinery": "Machinery",
+  "/machinery/fuel-logs": "Fuel Logs",
+  "/machinery/usage": "Usage",
+  "/machinery/maintenance": "Maintenance",
   "/attendance": "Attendance",
   "/attendance/bulk": "Bulk Attendance",
   "/attendance/history": "Attendance Records",
@@ -67,6 +72,10 @@ function pageTitle(pathname: string) {
   if (pathname.startsWith("/payroll/site-sheets/")) return "Site Salary Sheet";
   if (pathname.startsWith("/workers/") && pathname.endsWith("/history")) return "Attendance History";
   if (pathname.startsWith("/workers/")) return "Employee Profile";
+  if (pathname === "/machinery/fuel-logs") return "Fuel Logs";
+  if (pathname === "/machinery/usage/history") return "Usage Detail History";
+  if (pathname === "/machinery/usage") return "Usage";
+  if (pathname === "/machinery/maintenance") return "Maintenance";
   if (pathname.startsWith("/machinery/") && pathname.endsWith("/fuel-logs")) return "Fuel Logs";
   if (pathname.startsWith("/machinery/") && pathname.endsWith("/usage")) return "Usage History";
   if (pathname.startsWith("/machinery/") && pathname.endsWith("/maintenance")) return "Maintenance History";
@@ -126,8 +135,8 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                 match: (p: string) => p === "/payroll" || p.startsWith("/payroll/sheets") || p.startsWith("/payroll/site-sheets"),
                 children: isSuperAdmin
                   ? [
-                      { href: "/payroll/wages", label: "Update Wages", match: (p: string) => p.startsWith("/payroll/wages") },
-                      { href: "/payroll/advances", label: "Record Advance", match: (p: string) => p.startsWith("/payroll/advances") },
+                      { href: "/payroll/wages", label: "Update Wages", icon: IndianRupee, match: (p: string) => p.startsWith("/payroll/wages") },
+                      { href: "/payroll/advances", label: "Record Advance", icon: Wallet, match: (p: string) => p.startsWith("/payroll/advances") },
                     ]
                   : undefined,
               },
@@ -139,7 +148,23 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
               { href: "/materials", label: "Materials", icon: Package },
               { href: "/vendors", label: "Vendors", icon: Factory },
               { href: "/expenses", label: "Expenses", icon: ReceiptText },
-              { href: "/machinery", label: "Machinery", icon: Truck },
+              {
+                href: "/machinery",
+                label: "Machinery",
+                icon: Truck,
+                match: (p: string) =>
+                  p === "/machinery" ||
+                  (p.startsWith("/machinery/") &&
+                    p !== "/machinery/fuel-logs" &&
+                    p !== "/machinery/usage" &&
+                    p !== "/machinery/maintenance"),
+                children: [
+                  { href: "/machinery", label: "Machines", icon: Truck, match: (p: string) => p === "/machinery" },
+                  { href: "/machinery/fuel-logs", label: "Fuel Logs", icon: Fuel, match: (p: string) => p === "/machinery/fuel-logs" },
+                  { href: "/machinery/usage", label: "Usage", icon: Timer, match: (p: string) => p === "/machinery/usage" || p.startsWith("/machinery/usage/") },
+                  { href: "/machinery/maintenance", label: "Maintenance", icon: Wrench, match: (p: string) => p === "/machinery/maintenance" },
+                ],
+              },
               { href: "/reports", label: "Reports", icon: ClipboardList },
             ],
           },
@@ -243,6 +268,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                           <div className="ml-4 mt-0.5 space-y-0.5 border-l border-gray-200 pl-2">
                             {item.children.map((child) => {
                               const childIsActive = isActive(child);
+                              const ChildIcon = child.icon;
                               return (
                                 <Link
                                   key={child.href}
@@ -253,11 +279,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                                       : "text-gray-500 hover:bg-white hover:text-gray-800"
                                   }`}
                                 >
-                                  {child.href.includes("wages") ? (
-                                    <IndianRupee className="h-3.5 w-3.5 shrink-0" />
-                                  ) : (
-                                    <Wallet className="h-3.5 w-3.5 shrink-0" />
-                                  )}
+                                  {ChildIcon ? <ChildIcon className="h-3.5 w-3.5 shrink-0" /> : null}
                                   <span className="truncate">{child.label}</span>
                                 </Link>
                               );

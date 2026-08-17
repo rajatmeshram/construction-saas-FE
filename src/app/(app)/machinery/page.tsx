@@ -3,5 +3,5 @@
 import { OperationsManager } from "@/components/modules";
 
 export default function MachineryPage() {
-  return <OperationsManager module="machinery" />;
+  return <OperationsManager module="machinery" machinerySection="machines" />;
 }

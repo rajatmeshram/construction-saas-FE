@@ -188,6 +188,7 @@ type CreateTaskPayload = {
 
 type MachineryFormPayload = {
   name: string;
+  owner_name?: string;
   machine_type?: string;
   registration_number?: string;
   vehicle_number?: string;
@@ -224,6 +225,7 @@ function buildMachineryFormData(payload: MachineryFormPayload, options?: { clear
   };
 
   formData.append("name", payload.name);
+  appendText("owner_name", payload.owner_name);
   appendText("machine_type", payload.machine_type);
   appendText("registration_number", payload.registration_number);
   appendText("vehicle_number", payload.vehicle_number);
@@ -668,6 +670,7 @@ export const api = {
     }),
   createMachinery: (payload: {
     name: string;
+    owner_name?: string;
     machine_type?: string;
     registration_number?: string;
     vehicle_number?: string;
@@ -701,6 +704,7 @@ export const api = {
     id: number,
     payload: {
       name: string;
+      owner_name?: string;
       machine_type?: string;
       registration_number?: string;
       vehicle_number?: string;
@@ -735,14 +739,16 @@ export const api = {
     payload.documents.forEach((file) => formData.append("documents", file));
     return request<Machinery>(`/operations/machinery/${id}/`, { method: "PATCH", body: formData });
   },
+  deleteMachineryDocument: (machineryId: number, documentId: number) =>
+    request<void>(`/operations/machinery/${machineryId}/documents/${documentId}/`, { method: "DELETE" }),
   createMachineryUsage: (payload: {
-    project: number;
+    project?: number;
     machinery: number;
-    operator: string;
-    hours_used: string;
+    operator?: string;
+    hours_used?: string;
     km_used?: string;
-    fuel_consumption: string;
-    usage_date: string;
+    fuel_consumption?: string;
+    usage_date?: string;
   }) =>
     request("/operations/machinery-usage/", {
       method: "POST",
@@ -779,11 +785,25 @@ export const api = {
     ),
   exportFuelLogs: (machineryId: number, filename: string) =>
     downloadRequest(`/operations/fuel-logs/export/?machinery=${machineryId}`, filename),
-  createMaintenance: (payload: { machinery: number; service_date: string; details: string; cost: string; next_service_due: string }) =>
-    request("/operations/maintenance/", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
+  createMaintenance: (payload: {
+    machinery: number;
+    service_work_name?: string;
+    service_date: string;
+    details: string;
+    cost: string;
+    next_service_due: string;
+    photos?: File[];
+  }) => {
+    const formData = new FormData();
+    formData.append("machinery", String(payload.machinery));
+    if (payload.service_work_name) formData.append("service_work_name", payload.service_work_name);
+    formData.append("service_date", payload.service_date);
+    formData.append("details", payload.details);
+    formData.append("cost", payload.cost);
+    if (payload.next_service_due) formData.append("next_service_due", payload.next_service_due);
+    payload.photos?.forEach((file) => formData.append("photos", file));
+    return request<MachineryMaintenance>("/operations/maintenance/", { method: "POST", body: formData });
+  },
   maintenance: (machineryId?: number) =>
     request<{ results?: MachineryMaintenance[] }>(
       `/operations/maintenance/${buildListQuery({ machinery: machineryId, page_size: 200 })}`,

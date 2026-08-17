@@ -56,7 +56,6 @@ import {
   PageMessage,
   SearchInput,
   SubsectionTitle,
-  TabBar,
   TablePagination,
   Toolbar,
   btnAccentClass,
@@ -1027,7 +1026,15 @@ function ProjectDetail({
                   {usage.over_consumption && <Badge tone="red">Over consumption</Badge>}
                 </div>
                 <p className={`text-xs ${usage.over_consumption ? "text-red-700" : "text-gray-500"}`}>
-                  {usage.fuel_consumption}L · {usage.km_used} km · {usage.hours_used}h · {usage.operator || "No operator"} · {usage.usage_date}
+                  {[
+                    usage.fuel_consumption != null ? `${usage.fuel_consumption}L` : null,
+                    usage.km_used != null ? `${usage.km_used} km` : null,
+                    usage.hours_used != null ? `${usage.hours_used}h` : null,
+                    usage.operator || "No operator",
+                    usage.usage_date || null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </p>
                 {(usage.expected_km != null || usage.expected_hours != null) && (
                   <p className={`mt-1 text-xs ${usage.over_consumption ? "text-red-600" : "text-gray-400"}`}>
@@ -3008,6 +3015,19 @@ function formatShortDate(value?: string | null) {
   return new Date(value).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
+function OptionalExpiryCell({ date }: { date?: string | null }) {
+  if (!date) {
+    return <span className="text-xs text-gray-500">N/A</span>;
+  }
+  const tone = expiryBadgeTone(date);
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <span className="text-xs text-gray-600">{formatShortDate(date)}</span>
+      <Badge tone={tone}>{tone === "red" ? "Expired" : tone === "amber" ? "Soon" : "OK"}</Badge>
+    </div>
+  );
+}
+
 function expiryBadgeTone(date?: string | null): "green" | "amber" | "red" | "gray" {
   if (!date) return "gray";
   if (isExpired(date)) return "red";
@@ -3015,11 +3035,16 @@ function expiryBadgeTone(date?: string | null): "green" | "amber" | "red" | "gra
   return "green";
 }
 
-function OperationsManager({ module }: { module: "materials" | "vendors" | "expenses" | "machinery" | "reports" }) {
+function OperationsManager({
+  module,
+  machinerySection = "machines",
+}: {
+  module: "materials" | "vendors" | "expenses" | "machinery" | "reports";
+  machinerySection?: "machines" | "fuel" | "usage" | "maintenance";
+}) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
-  const [machineryTab, setMachineryTab] = useState<"fuel" | "machines" | "usage" | "maintenance">("machines");
   const [fuelModalOpen, setFuelModalOpen] = useState(false);
   const [machineModalOpen, setMachineModalOpen] = useState(false);
   const [usageModalOpen, setUsageModalOpen] = useState(false);
@@ -3027,6 +3052,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
   const [previousMeter, setPreviousMeter] = useState("");
   const [machineryComplianceFilter, setMachineryComplianceFilter] = useState<MachineryComplianceKey>("all");
   const [machineryExpiryFilter, setMachineryExpiryFilter] = useState<MachineryExpiryKey>("all");
+  const [machineryVehicleQuery, setMachineryVehicleQuery] = useState("");
   const [selectedMachinery, setSelectedMachinery] = useState<number[]>([]);
   const projects = useQuery<Paginated<Project>>({ queryKey: ["projects"], queryFn: api.projects });
   const vendors = useQuery<Paginated<Vendor>>({ queryKey: ["vendors"], queryFn: api.vendors, retry: false });
@@ -3163,14 +3189,18 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
   const expenseList = expenses.data?.results ?? [];
   const machineryList = machinery.data?.results ?? [];
   const driverList = drivers.data?.results ?? [];
-  const filteredMachineryList = machineryList.filter((item) =>
-    matchesMachineryCompliance(item, machineryComplianceFilter, machineryExpiryFilter),
-  );
+  const filteredMachineryList = machineryList.filter((item) => {
+    const vehicleQuery = machineryVehicleQuery.trim().toLowerCase();
+    if (vehicleQuery && !(item.vehicle_number || "").toLowerCase().includes(vehicleQuery)) {
+      return false;
+    }
+    return matchesMachineryCompliance(item, machineryComplianceFilter, machineryExpiryFilter);
+  });
   const fuelLogList = fuelLogs.data?.results ?? [];
   const usageList = machineryUsageList.data?.results ?? [];
-  const fuelPage = useTablePage(fuelLogList, { resetKey: machineryTab });
+  const fuelPage = useTablePage(fuelLogList, { resetKey: machinerySection });
   const machineryPage = useTablePage(filteredMachineryList, {
-    resetKey: `${machineryComplianceFilter}-${machineryExpiryFilter}`,
+    resetKey: `${machineryComplianceFilter}-${machineryExpiryFilter}-${machineryVehicleQuery}`,
   });
   const usagePage = useTablePage(usageList, { resetKey: "usage" });
   const machineryPageIds = machineryPage.pageRows.map((item) => item.id);
@@ -3231,7 +3261,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
       <option value="">Select machine</option>
       {machineryList.filter((item) => item.active).map((item) => (
         <option key={item.id} value={item.id}>
-          {item.name} - {item.registration_number}
+          {item.name}{item.vehicle_number ? ` - ${item.vehicle_number}` : ""}
         </option>
       ))}
     </select>
@@ -3482,18 +3512,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
       {module === "machinery" && (
         <>
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-            <TabBar
-              active={machineryTab}
-              onChange={setMachineryTab}
-              tabs={[
-                { id: "machines", label: "Machines", count: machineryList.length },
-                { id: "fuel", label: "Fuel Logs", count: fuelLogList.length },
-                { id: "usage", label: "Usage", count: usageList.length },
-                { id: "maintenance", label: "Maintenance" },
-              ]}
-            />
-
-            {machineryTab === "fuel" && (
+            {machinerySection === "fuel" && (
               <>
                 <Toolbar>
                   <p className="text-sm text-gray-500">{fuelLogList.length} fuel entries</p>
@@ -3566,7 +3585,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
               </>
             )}
 
-            {machineryTab === "machines" && (
+            {machinerySection === "machines" && (
               <>
                 <Toolbar>
                   <div className="flex flex-wrap items-end gap-2">
@@ -3600,8 +3619,17 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                         <option value="all">All records</option>
                       </select>
                     </label>
+                    <label className="block">
+                      <span className="text-xs font-medium text-gray-600">Vehicle number</span>
+                      <input
+                        className={`${inputClass} mt-1 min-w-[10rem]`}
+                        value={machineryVehicleQuery}
+                        onChange={(event) => setMachineryVehicleQuery(event.target.value)}
+                        placeholder="Search vehicle no."
+                      />
+                    </label>
                     <p className="pb-2 text-sm text-gray-500">
-                      {machineryExpiryFilter === "all" && machineryComplianceFilter === "all"
+                      {machineryExpiryFilter === "all" && machineryComplianceFilter === "all" && !machineryVehicleQuery.trim()
                         ? `${machineryList.length} machine${machineryList.length === 1 ? "" : "s"}`
                         : `${filteredMachineryList.length} of ${machineryList.length} machines`}
                     </p>
@@ -3666,11 +3694,11 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                         <DataTableCell className="font-medium text-gray-900">
                           <p>{item.name}</p>
                           <p className="text-xs font-normal text-gray-500">{item.machine_type}</p>
+                          {item.owner_name ? <p className="text-xs font-normal text-gray-500">Owner: {item.owner_name}</p> : null}
                         </DataTableCell>
                         <DataTableCell className="text-sm text-gray-700">{item.driver_name || "—"}</DataTableCell>
                         <DataTableCell className="text-xs">
                           <p>{item.vehicle_number || "—"}</p>
-                          <p className="text-gray-500">{item.registration_number}</p>
                         </DataTableCell>
                         <DataTableCell>
                           <div className="flex flex-col items-start gap-1">
@@ -3679,16 +3707,10 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                           </div>
                         </DataTableCell>
                         <DataTableCell>
-                          <div className="flex flex-col items-start gap-1">
-                            <span className="text-xs text-gray-600">{formatShortDate(item.permit_expiry_date)}</span>
-                            {item.permit_expiry_date && <Badge tone={expiryBadgeTone(item.permit_expiry_date)}>{expiryBadgeTone(item.permit_expiry_date) === "red" ? "Expired" : expiryBadgeTone(item.permit_expiry_date) === "amber" ? "Soon" : "OK"}</Badge>}
-                          </div>
+                          <OptionalExpiryCell date={item.permit_expiry_date} />
                         </DataTableCell>
                         <DataTableCell>
-                          <div className="flex flex-col items-start gap-1">
-                            <span className="text-xs text-gray-600">{formatShortDate(item.fitness_validity_date)}</span>
-                            {item.fitness_validity_date && <Badge tone={expiryBadgeTone(item.fitness_validity_date)}>{expiryBadgeTone(item.fitness_validity_date) === "red" ? "Expired" : expiryBadgeTone(item.fitness_validity_date) === "amber" ? "Soon" : "OK"}</Badge>}
-                          </div>
+                          <OptionalExpiryCell date={item.fitness_validity_date} />
                         </DataTableCell>
                         <DataTableCell>
                           <div className="flex flex-col items-start gap-1">
@@ -3697,16 +3719,10 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                           </div>
                         </DataTableCell>
                         <DataTableCell>
-                          <div className="flex flex-col items-start gap-1">
-                            <span className="text-xs text-gray-600">{formatShortDate(item.mv_tax_validity_date)}</span>
-                            {item.mv_tax_validity_date && <Badge tone={expiryBadgeTone(item.mv_tax_validity_date)}>{expiryBadgeTone(item.mv_tax_validity_date) === "red" ? "Expired" : expiryBadgeTone(item.mv_tax_validity_date) === "amber" ? "Soon" : "OK"}</Badge>}
-                          </div>
+                          <OptionalExpiryCell date={item.mv_tax_validity_date} />
                         </DataTableCell>
                         <DataTableCell>
-                          <div className="flex flex-col items-start gap-1">
-                            <span className="text-xs text-gray-600">{formatShortDate(item.green_tax_date)}</span>
-                            {item.green_tax_date && <Badge tone={expiryBadgeTone(item.green_tax_date)}>{expiryBadgeTone(item.green_tax_date) === "red" ? "Expired" : expiryBadgeTone(item.green_tax_date) === "amber" ? "Soon" : "OK"}</Badge>}
-                          </div>
+                          <OptionalExpiryCell date={item.green_tax_date} />
                         </DataTableCell>
                         <DataTableCell>
                           <Badge tone={item.hsrp_done ? "green" : "amber"}>{item.hsrp_done ? "Done" : "Pending"}</Badge>
@@ -3761,10 +3777,16 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
               </>
             )}
 
-            {machineryTab === "usage" && (
+            {machinerySection === "usage" && (
               <>
                 <Toolbar>
-                  <p className="text-sm text-gray-500">{usageList.length} usage entries</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link href="/machinery/usage/history" className={btnSecondaryClass}>
+                      <History className="h-4 w-4" />
+                      View detail history
+                    </Link>
+                    <p className="text-sm text-gray-500">{usageList.length} usage entries</p>
+                  </div>
                   <button type="button" className={btnPrimaryClass} onClick={() => setUsageModalOpen(true)}>
                     + Add Usage
                   </button>
@@ -3784,15 +3806,15 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                   <DataTableBody>
                     {usagePage.pageRows.map((usage, i) => (
                       <DataTableRow key={usage.id} zebra={i % 2 === 1}>
-                        <DataTableCell>{usage.usage_date}</DataTableCell>
+                        <DataTableCell>{usage.usage_date || "—"}</DataTableCell>
                         <DataTableCell className="font-medium text-gray-900">
                           <p>{usage.machinery_name}</p>
                           <p className="text-xs font-normal text-gray-500">{usage.operator || "No operator"}</p>
                         </DataTableCell>
-                        <DataTableCell>{usage.project_name}</DataTableCell>
-                        <DataTableCell>{usage.fuel_consumption} L</DataTableCell>
+                        <DataTableCell>{usage.project_name || "—"}</DataTableCell>
+                        <DataTableCell>{usage.fuel_consumption != null ? `${usage.fuel_consumption} L` : "—"}</DataTableCell>
                         <DataTableCell className={usage.km_over_consumption ? "font-semibold text-red-700" : undefined}>
-                          {usage.km_used} km
+                          {usage.km_used != null ? `${usage.km_used} km` : "—"}
                           {usage.expected_km != null ? (
                             <p className={`text-xs ${usage.km_over_consumption ? "text-red-600" : "text-gray-500"}`}>
                               expected {usage.expected_km} km
@@ -3800,7 +3822,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                           ) : null}
                         </DataTableCell>
                         <DataTableCell className={usage.hours_over_consumption ? "font-semibold text-red-700" : undefined}>
-                          {usage.hours_used} h
+                          {usage.hours_used != null ? `${usage.hours_used} h` : "—"}
                           {usage.expected_hours != null ? (
                             <p className={`text-xs ${usage.hours_over_consumption ? "text-red-600" : "text-gray-500"}`}>
                               expected {usage.expected_hours} h
@@ -3839,27 +3861,34 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
               </>
             )}
 
-            {machineryTab === "maintenance" && (
+            {machinerySection === "maintenance" && (
               <div className="p-4">
                 <form
                   onSubmit={(event) => {
                     event.preventDefault();
                     const form = new FormData(event.currentTarget);
+                    const photos = form
+                      .getAll("photos")
+                      .filter((file): file is File => file instanceof File && file.size > 0);
                     createMaintenance.mutate({
                       machinery: Number(form.get("machinery")),
+                      service_work_name: formValue(form, "service_work_name"),
                       service_date: formValue(form, "service_date"),
                       details: formValue(form, "details"),
                       cost: formValue(form, "cost") || "0",
                       next_service_due: formValue(form, "next_service_due"),
+                      photos: photos.length ? photos : undefined,
                     });
                     event.currentTarget.reset();
                   }}
                 >
                   <FormRow label="Machine">{machinerySelect}</FormRow>
+                  <FormRow label="Service work name"><input className={inputClass} name="service_work_name" placeholder="e.g. Engine oil change" required /></FormRow>
                   <FormRow label="Service date"><input className={inputClass} name="service_date" type="date" required /></FormRow>
                   <FormRow label="Cost"><input className={inputClass} name="cost" type="number" defaultValue="0" /></FormRow>
                   <FormRow label="Next service due"><input className={inputClass} name="next_service_due" type="date" /></FormRow>
                   <FormRow label="Details"><textarea className={inputClass} name="details" rows={3} required /></FormRow>
+                  <FormRow label="Photos"><input className={inputClass} name="photos" type="file" accept="image/*" multiple /></FormRow>
                   <div className="mt-4 flex justify-end">
                     <button className={btnPrimaryClass}>Save Maintenance</button>
                   </div>
@@ -3929,7 +3958,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                   <option value="">Select machine</option>
                   {machineryList.filter((item) => item.active).map((item) => (
                     <option key={item.id} value={item.id}>
-                      {item.name} - {item.registration_number}
+                      {item.name}{item.vehicle_number ? ` - ${item.vehicle_number}` : ""}
                     </option>
                   ))}
                 </select>
@@ -3976,23 +4005,23 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                 event.preventDefault();
                 const form = new FormData(event.currentTarget);
                 createUsage.mutate({
-                  project: Number(form.get("project")),
+                  project: form.get("project") ? Number(form.get("project")) : undefined,
                   machinery: Number(form.get("machinery")),
                   operator: formValue(form, "operator"),
-                  hours_used: formValue(form, "hours_used"),
-                  km_used: formValue(form, "km_used") || "0",
-                  fuel_consumption: formValue(form, "fuel_consumption") || "0",
-                  usage_date: formValue(form, "usage_date"),
+                  hours_used: formValue(form, "hours_used") || undefined,
+                  km_used: formValue(form, "km_used") || undefined,
+                  fuel_consumption: formValue(form, "fuel_consumption") || undefined,
+                  usage_date: formValue(form, "usage_date") || undefined,
                 });
               }}
             >
-              <FormRow label="Project">{projectSelect}</FormRow>
+              <FormRow label="Project">{fuelProjectSelect}</FormRow>
               <FormRow label="Machine">{machinerySelect}</FormRow>
               <FormRow label="Operator"><input className={inputClass} name="operator" /></FormRow>
-              <FormRow label="Hours used"><input className={inputClass} name="hours_used" type="number" min="0" step="0.1" required /></FormRow>
-              <FormRow label="KM used"><input className={inputClass} name="km_used" type="number" min="0" step="0.1" defaultValue="0" /></FormRow>
-              <FormRow label="Fuel (liters)"><input className={inputClass} name="fuel_consumption" type="number" min="0" step="0.1" defaultValue="0" /></FormRow>
-              <FormRow label="Date"><input className={inputClass} name="usage_date" type="date" required /></FormRow>
+              <FormRow label="Hours used"><input className={inputClass} name="hours_used" type="number" min="0" step="0.1" /></FormRow>
+              <FormRow label="KM used"><input className={inputClass} name="km_used" type="number" min="0" step="0.1" /></FormRow>
+              <FormRow label="Fuel (liters)"><input className={inputClass} name="fuel_consumption" type="number" min="0" step="0.1" /></FormRow>
+              <FormRow label="Date"><input className={inputClass} name="usage_date" type="date" /></FormRow>
             </form>
           </Modal>
 
@@ -4020,8 +4049,8 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                 const files = form.getAll("documents").filter((item): item is File => item instanceof File && item.size > 0);
                 createMachinery.mutate({
                   name: formValue(form, "name"),
+                  owner_name: formValue(form, "owner_name"),
                   machine_type: formValue(form, "machine_type"),
-                  registration_number: formValue(form, "registration_number"),
                   vehicle_number: formValue(form, "vehicle_number"),
                   vehicle_class: formValue(form, "vehicle_class"),
                   chassis_number: formValue(form, "chassis_number"),
@@ -4049,6 +4078,7 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
               }}
             >
               <FormRow label="Machine name"><input className={inputClass} name="name" required /></FormRow>
+              <FormRow label="Owner name"><input className={inputClass} name="owner_name" /></FormRow>
               <FormRow label="Type"><input className={inputClass} name="machine_type" placeholder="Excavator, Truck, Crane..." /></FormRow>
               <FormRow label="Driver">
                 <select className={inputClass} name="driver" defaultValue="">
@@ -4061,7 +4091,6 @@ function OperationsManager({ module }: { module: "materials" | "vendors" | "expe
                 </select>
               </FormRow>
               <FormRow label="Vehicle number"><input className={inputClass} name="vehicle_number" placeholder="MH-12-AB-1234" /></FormRow>
-              <FormRow label="Registration number"><input className={inputClass} name="registration_number" placeholder="Auto-generated if empty" /></FormRow>
               <FormRow label="Vehicle class"><input className={inputClass} name="vehicle_class" placeholder="LMV, HMV, Trailer..." /></FormRow>
               <FormRow label="Chassis no."><input className={inputClass} name="chassis_number" /></FormRow>
               <FormRow label="Engine no."><input className={inputClass} name="engine_number" /></FormRow>
