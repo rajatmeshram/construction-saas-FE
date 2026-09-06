@@ -152,7 +152,15 @@ function expiryTone(date?: string | null): "green" | "amber" | "red" | "gray" {
 }
 
 function docTypeLabel(type: MachineryDocument["document_type"]) {
-  const labels = { INSURANCE: "Insurance", PERMIT: "Permit", RC: "RC", OTHER: "Other" };
+  const labels: Record<MachineryDocument["document_type"], string> = {
+    INSURANCE: "Policy",
+    PERMIT: "Permit",
+    FITNESS: "Fitness",
+    PUC: "PUC",
+    GREEN_TAX: "Green tax",
+    RC: "RC",
+    OTHER: "Other",
+  };
   return labels[type] ?? type;
 }
 
@@ -671,8 +679,11 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             <FormRow label="Document type">
               <select className={inputClass} value={docType} onChange={(e) => setDocType(e.target.value as MachineryDocument["document_type"])}>
-                <option value="INSURANCE">Insurance</option>
+                <option value="INSURANCE">Policy</option>
                 <option value="PERMIT">Permit</option>
+                <option value="FITNESS">Fitness</option>
+                <option value="PUC">PUC</option>
+                <option value="GREEN_TAX">Green tax</option>
                 <option value="RC">Registration (RC)</option>
                 <option value="OTHER">Other</option>
               </select>

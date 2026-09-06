@@ -736,12 +736,6 @@ function ProjectDetail({
     enabled: canManage,
     refetchInterval: 30_000,
   });
-  const allLabours = useQuery<AuthUser[]>({
-    queryKey: ["labours"],
-    queryFn: api.labours,
-    enabled: canManage,
-    retry: false,
-  });
   const allSupervisors = useQuery<AuthUser[]>({
     queryKey: ["supervisors"],
     queryFn: api.supervisors,
@@ -798,13 +792,6 @@ function ProjectDetail({
   const stockRows = (materialStock.data?.results ?? []).filter((row) => row.project === projectId);
   const usageRows = machineryUsage.data?.results ?? [];
   const documentList = documents.data?.results ?? [];
-  const allLabourOptions: UserMini[] = (allLabours.data ?? []).map((labour) => ({
-    id: labour.id,
-    username: labour.username,
-    full_name: labour.full_name,
-    role: labour.role,
-    mobile_number: labour.mobile_number,
-  }));
   const allSupervisorOptions: UserMini[] = (allSupervisors.data ?? []).map((supervisor) => ({
     id: supervisor.id,
     username: supervisor.username,
@@ -822,7 +809,9 @@ function ProjectDetail({
     }
     return map;
   }, [allSupervisors.data, projectId]);
-  const projectLabours = allLabourOptions.filter((labour) => projectLabourIds.includes(labour.id));
+  const projectLabours = (project.data?.labour_details ?? []).filter((labour) =>
+    projectLabourIds.includes(labour.id),
+  );
   const attendanceRows = projectAttendance.data?.results ?? [];
   const liveAttendance = attendanceRows.filter((row) => row.status === "PUNCHED_IN");
 
@@ -971,17 +960,17 @@ function ProjectDetail({
             <div className="mt-2">
               {canManage ? (
                 <MemberPicker
-                  members={allLabourOptions}
+                  members={projectLabours}
                   selected={projectLabourIds}
                   onChange={setProjectLabourIds}
                   getBadge={labourSiteBadge}
-                  emptyMessage="No workers found. Add them under Employee."
+                  emptyMessage="No workers assigned to this site."
                 />
               ) : (
                 <MemberList
                   members={projectLabours}
                   getBadge={labourSiteBadge}
-                  emptyMessage="No employees assigned to this project."
+                  emptyMessage="No workers assigned to this site."
                 />
               )}
             </div>
@@ -3015,15 +3004,55 @@ function formatShortDate(value?: string | null) {
   return new Date(value).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
-function OptionalExpiryCell({ date }: { date?: string | null }) {
+function machineryDocHref(item: Machinery, documentType: Machinery["documents"][number]["document_type"]) {
+  const docs = (item.documents ?? []).filter((doc) => doc.document_type === documentType && doc.file_url);
+  if (!docs.length) return null;
+  return mediaUrl(docs[0].file_url);
+}
+
+function ComplianceDocDownload({ href, label }: { href?: string | null; label: string }) {
+  if (!href) return null;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      download
+      title={`Download ${label}`}
+      aria-label={`Download ${label}`}
+      className="inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1 text-gray-600 hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <Download className="h-3.5 w-3.5" />
+    </a>
+  );
+}
+
+function OptionalExpiryCell({
+  date,
+  downloadHref,
+  downloadLabel,
+}: {
+  date?: string | null;
+  downloadHref?: string | null;
+  downloadLabel?: string;
+}) {
   if (!date) {
-    return <span className="text-xs text-gray-500">N/A</span>;
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs text-gray-500">N/A</span>
+        <ComplianceDocDownload href={downloadHref} label={downloadLabel || "document"} />
+      </div>
+    );
   }
   const tone = expiryBadgeTone(date);
   return (
     <div className="flex flex-col items-start gap-1">
       <span className="text-xs text-gray-600">{formatShortDate(date)}</span>
-      <Badge tone={tone}>{tone === "red" ? "Expired" : tone === "amber" ? "Soon" : "OK"}</Badge>
+      <div className="flex items-center gap-1.5">
+        <Badge tone={tone}>{tone === "red" ? "Expired" : tone === "amber" ? "Soon" : "OK"}</Badge>
+        <ComplianceDocDownload href={downloadHref} label={downloadLabel || "document"} />
+      </div>
     </div>
   );
 }
@@ -3709,26 +3738,70 @@ function OperationsManager({
                         <DataTableCell>
                           <div className="flex flex-col items-start gap-1">
                             <span className="text-xs text-gray-600">{formatShortDate(item.insurance_expiry_date)}</span>
-                            {item.insurance_expiry_date && <Badge tone={expiryBadgeTone(item.insurance_expiry_date)}>{expiryBadgeTone(item.insurance_expiry_date) === "red" ? "Expired" : expiryBadgeTone(item.insurance_expiry_date) === "amber" ? "Soon" : "OK"}</Badge>}
+                            {item.insurance_expiry_date ? (
+                              <div className="flex items-center gap-1.5">
+                                <Badge tone={expiryBadgeTone(item.insurance_expiry_date)}>
+                                  {expiryBadgeTone(item.insurance_expiry_date) === "red"
+                                    ? "Expired"
+                                    : expiryBadgeTone(item.insurance_expiry_date) === "amber"
+                                      ? "Soon"
+                                      : "OK"}
+                                </Badge>
+                                <ComplianceDocDownload
+                                  href={machineryDocHref(item, "INSURANCE")}
+                                  label="policy"
+                                />
+                              </div>
+                            ) : (
+                              <ComplianceDocDownload
+                                href={machineryDocHref(item, "INSURANCE")}
+                                label="policy"
+                              />
+                            )}
                           </div>
                         </DataTableCell>
                         <DataTableCell>
-                          <OptionalExpiryCell date={item.permit_expiry_date} />
+                          <OptionalExpiryCell
+                            date={item.permit_expiry_date}
+                            downloadHref={machineryDocHref(item, "PERMIT")}
+                            downloadLabel="permit"
+                          />
                         </DataTableCell>
                         <DataTableCell>
-                          <OptionalExpiryCell date={item.fitness_validity_date} />
+                          <OptionalExpiryCell
+                            date={item.fitness_validity_date}
+                            downloadHref={machineryDocHref(item, "FITNESS")}
+                            downloadLabel="fitness"
+                          />
                         </DataTableCell>
                         <DataTableCell>
                           <div className="flex flex-col items-start gap-1">
                             <span className="text-xs text-gray-600">{formatShortDate(item.puc_date)}</span>
-                            {item.puc_date && <Badge tone={expiryBadgeTone(item.puc_date)}>{expiryBadgeTone(item.puc_date) === "red" ? "Expired" : expiryBadgeTone(item.puc_date) === "amber" ? "Soon" : "OK"}</Badge>}
+                            {item.puc_date ? (
+                              <div className="flex items-center gap-1.5">
+                                <Badge tone={expiryBadgeTone(item.puc_date)}>
+                                  {expiryBadgeTone(item.puc_date) === "red"
+                                    ? "Expired"
+                                    : expiryBadgeTone(item.puc_date) === "amber"
+                                      ? "Soon"
+                                      : "OK"}
+                                </Badge>
+                                <ComplianceDocDownload href={machineryDocHref(item, "PUC")} label="PUC" />
+                              </div>
+                            ) : (
+                              <ComplianceDocDownload href={machineryDocHref(item, "PUC")} label="PUC" />
+                            )}
                           </div>
                         </DataTableCell>
                         <DataTableCell>
                           <OptionalExpiryCell date={item.mv_tax_validity_date} />
                         </DataTableCell>
                         <DataTableCell>
-                          <OptionalExpiryCell date={item.green_tax_date} />
+                          <OptionalExpiryCell
+                            date={item.green_tax_date}
+                            downloadHref={machineryDocHref(item, "GREEN_TAX")}
+                            downloadLabel="green tax"
+                          />
                         </DataTableCell>
                         <DataTableCell>
                           <Badge tone={item.hsrp_done ? "green" : "amber"}>{item.hsrp_done ? "Done" : "Pending"}</Badge>
@@ -4044,6 +4117,7 @@ function OperationsManager({
             title="Add Machinery"
             subtitle="Register machinery with vehicle, insurance, permit, and compliance details"
             onClose={() => setMachineModalOpen(false)}
+            wide
             footer={
               <>
                 <button type="button" className={btnSecondaryClass} onClick={() => setMachineModalOpen(false)}>
@@ -4060,7 +4134,10 @@ function OperationsManager({
               onSubmit={(event) => {
                 event.preventDefault();
                 const form = new FormData(event.currentTarget);
-                const files = form.getAll("documents").filter((item): item is File => item instanceof File && item.size > 0);
+                const singleFile = (name: string) => {
+                  const value = form.get(name);
+                  return value instanceof File && value.size > 0 ? value : undefined;
+                };
                 createMachinery.mutate({
                   name: formValue(form, "name"),
                   owner_name: formValue(form, "owner_name"),
@@ -4086,81 +4163,105 @@ function OperationsManager({
                   avg_hours_per_liter: formValue(form, "avg_hours_per_liter"),
                   notes: formValue(form, "notes"),
                   active: form.get("active") === "on",
-                  document_type: formValue(form, "document_type") || "OTHER",
-                  documents: files.length ? files : undefined,
+                  document_insurance: singleFile("document_insurance"),
+                  document_permit: singleFile("document_permit"),
+                  document_fitness: singleFile("document_fitness"),
+                  document_puc: singleFile("document_puc"),
+                  document_green_tax: singleFile("document_green_tax"),
                 });
               }}
             >
-              <FormRow label="Machine name"><input className={inputClass} name="name" required /></FormRow>
-              <FormRow label="Owner name"><input className={inputClass} name="owner_name" /></FormRow>
-              <FormRow label="Type"><input className={inputClass} name="machine_type" placeholder="Excavator, Truck, Crane..." /></FormRow>
-              <FormRow label="Driver">
-                <select className={inputClass} name="driver" defaultValue="">
-                  <option value="">No driver assigned</option>
-                  {driverList.map((driver) => (
-                    <option key={driver.id} value={driver.user_id}>
-                      {driver.full_name}
-                    </option>
-                  ))}
-                </select>
-              </FormRow>
-              <FormRow label="Vehicle number"><input className={inputClass} name="vehicle_number" placeholder="MH-12-AB-1234" /></FormRow>
-              <FormRow label="Vehicle class"><input className={inputClass} name="vehicle_class" placeholder="LMV, HMV, Trailer..." /></FormRow>
-              <FormRow label="Chassis no."><input className={inputClass} name="chassis_number" /></FormRow>
-              <FormRow label="Engine no."><input className={inputClass} name="engine_number" /></FormRow>
+              <div className="grid gap-x-6 md:grid-cols-2">
+                <FormRow label="Machine name"><input className={inputClass} name="name" required /></FormRow>
+                <FormRow label="Owner name"><input className={inputClass} name="owner_name" /></FormRow>
+                <FormRow label="Type"><input className={inputClass} name="machine_type" placeholder="Excavator, Truck, Crane..." /></FormRow>
+                <FormRow label="Driver">
+                  <select className={inputClass} name="driver" defaultValue="">
+                    <option value="">No driver assigned</option>
+                    {driverList.map((driver) => (
+                      <option key={driver.id} value={driver.user_id}>
+                        {driver.full_name}
+                      </option>
+                    ))}
+                  </select>
+                </FormRow>
+                <FormRow label="Vehicle number"><input className={inputClass} name="vehicle_number" placeholder="MH-12-AB-1234" /></FormRow>
+                <FormRow label="Vehicle class"><input className={inputClass} name="vehicle_class" placeholder="LMV, HMV, Trailer..." /></FormRow>
+                <FormRow label="Chassis no."><input className={inputClass} name="chassis_number" /></FormRow>
+                <FormRow label="Engine no."><input className={inputClass} name="engine_number" /></FormRow>
+              </div>
               <div className="mt-4 border-t border-gray-100 pt-4">
                 <p className="text-sm font-semibold text-coal">Average fuel consumption</p>
                 <p className="mt-1 text-xs text-gray-500">Used to detect over-consumption on usage logs (1 liter baseline).</p>
               </div>
-              <FormRow label="Avg km / liter"><input className={inputClass} name="avg_km_per_liter" type="number" min="0" step="0.1" placeholder="e.g. 4 = 1L covers 4 km" /></FormRow>
-              <FormRow label="Avg hrs / liter"><input className={inputClass} name="avg_hours_per_liter" type="number" min="0" step="0.1" placeholder="e.g. 4 = 1L covers 4 hours" /></FormRow>
+              <div className="grid gap-x-6 md:grid-cols-2">
+                <FormRow label="Avg km / liter"><input className={inputClass} name="avg_km_per_liter" type="number" min="0" step="0.1" placeholder="e.g. 4 = 1L covers 4 km" /></FormRow>
+                <FormRow label="Avg hrs / liter"><input className={inputClass} name="avg_hours_per_liter" type="number" min="0" step="0.1" placeholder="e.g. 4 = 1L covers 4 hours" /></FormRow>
+              </div>
               <div className="mt-4 border-t border-gray-100 pt-4">
                 <p className="text-sm font-semibold text-coal">Insurance</p>
               </div>
-              <FormRow label="Provider"><input className={inputClass} name="insurance_provider" /></FormRow>
-              <FormRow label="Policy number"><input className={inputClass} name="insurance_policy_number" /></FormRow>
-              <FormRow label="Start date"><input className={inputClass} name="insurance_start_date" type="date" /></FormRow>
-              <FormRow label="Expiry date"><input className={inputClass} name="insurance_expiry_date" type="date" /></FormRow>
+              <div className="grid gap-x-6 md:grid-cols-2">
+                <FormRow label="Provider"><input className={inputClass} name="insurance_provider" /></FormRow>
+                <FormRow label="Policy number">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <input className={inputClass} name="insurance_policy_number" />
+                    <input className={inputClass} name="document_insurance" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" title="Upload policy document" />
+                  </div>
+                </FormRow>
+                <FormRow label="Start date"><input className={inputClass} name="insurance_start_date" type="date" /></FormRow>
+                <FormRow label="Expiry date"><input className={inputClass} name="insurance_expiry_date" type="date" /></FormRow>
+              </div>
               <div className="mt-4 border-t border-gray-100 pt-4">
                 <p className="text-sm font-semibold text-coal">Permit</p>
               </div>
-              <FormRow label="Permit number"><input className={inputClass} name="permit_number" /></FormRow>
-              <FormRow label="Permit date"><input className={inputClass} name="permit_issue_date" type="date" /></FormRow>
-              <FormRow label="Permit validity"><input className={inputClass} name="permit_expiry_date" type="date" /></FormRow>
+              <div className="grid gap-x-6 md:grid-cols-2">
+                <FormRow label="Permit number">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <input className={inputClass} name="permit_number" />
+                    <input className={inputClass} name="document_permit" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" title="Upload permit document" />
+                  </div>
+                </FormRow>
+                <FormRow label="Permit date"><input className={inputClass} name="permit_issue_date" type="date" /></FormRow>
+                <FormRow label="Permit validity"><input className={inputClass} name="permit_expiry_date" type="date" /></FormRow>
+              </div>
               <div className="mt-4 border-t border-gray-100 pt-4">
                 <p className="text-sm font-semibold text-coal">Compliance</p>
               </div>
-              <FormRow label="Fitness validity"><input className={inputClass} name="fitness_validity_date" type="date" /></FormRow>
-              <FormRow label="PUC date"><input className={inputClass} name="puc_date" type="date" /></FormRow>
-              <FormRow label="MV tax validity"><input className={inputClass} name="mv_tax_validity_date" type="date" /></FormRow>
-              <FormRow label="Green tax date"><input className={inputClass} name="green_tax_date" type="date" /></FormRow>
-              <FormRow label="HSRP done">
-                <label className="flex items-center gap-2 text-sm text-gray-700">
-                  <input type="checkbox" name="hsrp_done" className="rounded border-gray-300" />
-                  HSRP completed
-                </label>
-              </FormRow>
-              <FormRow label="Notes"><textarea className={inputClass} name="notes" rows={2} /></FormRow>
-              <FormRow label="Status">
-                <label className="flex items-center gap-2 text-sm text-gray-700">
-                  <input type="checkbox" name="active" defaultChecked className="rounded border-gray-300" />
-                  Active machine
-                </label>
-              </FormRow>
-              <div className="mt-4 border-t border-gray-100 pt-4">
-                <p className="text-sm font-semibold text-coal">Documents</p>
+              <div className="grid gap-x-6 md:grid-cols-2">
+                <FormRow label="Fitness validity">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <input className={inputClass} name="fitness_validity_date" type="date" />
+                    <input className={inputClass} name="document_fitness" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" title="Upload fitness document" />
+                  </div>
+                </FormRow>
+                <FormRow label="PUC date">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <input className={inputClass} name="puc_date" type="date" />
+                    <input className={inputClass} name="document_puc" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" title="Upload PUC document" />
+                  </div>
+                </FormRow>
+                <FormRow label="MV tax validity"><input className={inputClass} name="mv_tax_validity_date" type="date" /></FormRow>
+                <FormRow label="Green tax date">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <input className={inputClass} name="green_tax_date" type="date" />
+                    <input className={inputClass} name="document_green_tax" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" title="Upload green tax document" />
+                  </div>
+                </FormRow>
+                <FormRow label="HSRP done">
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input type="checkbox" name="hsrp_done" className="rounded border-gray-300" />
+                    HSRP completed
+                  </label>
+                </FormRow>
+                <FormRow label="Status">
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input type="checkbox" name="active" defaultChecked className="rounded border-gray-300" />
+                    Active machine
+                  </label>
+                </FormRow>
               </div>
-              <FormRow label="Document type">
-                <select className={inputClass} name="document_type" defaultValue="INSURANCE">
-                  <option value="INSURANCE">Insurance</option>
-                  <option value="PERMIT">Permit</option>
-                  <option value="RC">Registration (RC)</option>
-                  <option value="OTHER">Other</option>
-                </select>
-              </FormRow>
-              <FormRow label="Upload files">
-                <input className={inputClass} name="documents" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp" />
-              </FormRow>
+              <FormRow label="Notes"><textarea className={inputClass} name="notes" rows={2} /></FormRow>
             </form>
           </Modal>
         </>

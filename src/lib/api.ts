@@ -214,6 +214,11 @@ type MachineryFormPayload = {
   active?: boolean;
   document_type?: string;
   documents?: File[];
+  document_insurance?: File;
+  document_permit?: File;
+  document_fitness?: File;
+  document_puc?: File;
+  document_green_tax?: File;
 };
 
 function buildMachineryFormData(payload: MachineryFormPayload, options?: { clearEmpty?: boolean }) {
@@ -255,6 +260,11 @@ function buildMachineryFormData(payload: MachineryFormPayload, options?: { clear
   formData.append("active", payload.active === false ? "false" : "true");
   if (payload.document_type) formData.append("document_type", payload.document_type);
   payload.documents?.forEach((file) => formData.append("documents", file));
+  if (payload.document_insurance) formData.append("document_insurance", payload.document_insurance);
+  if (payload.document_permit) formData.append("document_permit", payload.document_permit);
+  if (payload.document_fitness) formData.append("document_fitness", payload.document_fitness);
+  if (payload.document_puc) formData.append("document_puc", payload.document_puc);
+  if (payload.document_green_tax) formData.append("document_green_tax", payload.document_green_tax);
   return formData;
 }
 
@@ -696,6 +706,11 @@ export const api = {
     active?: boolean;
     document_type?: string;
     documents?: File[];
+    document_insurance?: File;
+    document_permit?: File;
+    document_fitness?: File;
+    document_puc?: File;
+    document_green_tax?: File;
   }) => {
     const formData = buildMachineryFormData(payload);
     return request<Machinery>("/operations/machinery/", { method: "POST", body: formData });
@@ -883,6 +898,27 @@ export const api = {
     }>("/labour/workers/bulk_delete/", {
       method: "POST",
       body: JSON.stringify({ ids }),
+    }),
+  bulkAssignWorkers: (payload: {
+    project_id: number | null;
+    labour_ids?: number[];
+    supervisor_ids?: number[];
+  }) =>
+    request<{
+      project_id: number | null;
+      assigned_labours: number;
+      unassigned_labours: number;
+      assigned_supervisors: number;
+      unassigned_supervisors: number;
+      skipped_count: number;
+      skipped: Array<{ id: number; kind?: string; error: string }>;
+    }>("/labour/workers/bulk_assign/", {
+      method: "POST",
+      body: JSON.stringify({
+        project_id: payload.project_id,
+        labour_ids: payload.labour_ids ?? [],
+        supervisor_ids: payload.supervisor_ids ?? [],
+      }),
     }),
   importLabourWorkers: (file: File) => {
     const formData = new FormData();

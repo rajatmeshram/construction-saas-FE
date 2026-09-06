@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   CalendarClock,
   History,
+  MapPin,
   Timer,
   Trash2,
   Upload,
@@ -264,6 +265,7 @@ export function WorkersListPage() {
   const [nameSearch, setNameSearch] = useState("");
   const [designationFilter, setDesignationFilter] = useState("all");
   const [siteFilter, setSiteFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [message, setMessage] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState("");
@@ -274,6 +276,7 @@ export function WorkersListPage() {
   const [editDesignationChoice, setEditDesignationChoice] = useState("LABOUR");
   const [editCustomDesignation, setEditCustomDesignation] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
+  const [bulkAssignSiteId, setBulkAssignSiteId] = useState("");
   const [assigningKey, setAssigningKey] = useState<string | null>(null);
   const createFormRef = useRef<HTMLFormElement>(null);
   const editFormRef = useRef<HTMLFormElement>(null);
@@ -409,6 +412,44 @@ export function WorkersListPage() {
       queryClient.invalidateQueries({ queryKey: ["supervisors"] });
     },
     onError: (err) => setMessage(err instanceof Error ? err.message : "Bulk remove failed."),
+  });
+
+  const bulkAssignSite = useMutation({
+    mutationFn: api.bulkAssignWorkers,
+    onSuccess: (result) => {
+      const parts: string[] = [];
+      if (result.assigned_labours) {
+        parts.push(
+          `Assigned ${result.assigned_labours} employee${result.assigned_labours === 1 ? "" : "s"}`,
+        );
+      }
+      if (result.unassigned_labours) {
+        parts.push(
+          `Unassigned ${result.unassigned_labours} employee${result.unassigned_labours === 1 ? "" : "s"}`,
+        );
+      }
+      if (result.assigned_supervisors) {
+        parts.push(
+          `Assigned ${result.assigned_supervisors} supervisor${result.assigned_supervisors === 1 ? "" : "s"}`,
+        );
+      }
+      if (result.unassigned_supervisors) {
+        parts.push(
+          `Unassigned ${result.unassigned_supervisors} supervisor${result.unassigned_supervisors === 1 ? "" : "s"}`,
+        );
+      }
+      if (result.skipped_count) {
+        const reasons = result.skipped.map((row) => row.error).join("; ");
+        parts.push(`Skipped ${result.skipped_count}: ${reasons}`);
+      }
+      setMessage(parts.length ? `${parts.join(". ")}.` : "No assignment changes.");
+      setSelected([]);
+      setBulkAssignSiteId("");
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["labour-workers"] });
+      queryClient.invalidateQueries({ queryKey: ["supervisors"] });
+    },
+    onError: (err) => setMessage(err instanceof Error ? err.message : "Bulk assign failed."),
   });
 
   const assignProject = useMutation({
@@ -549,11 +590,15 @@ export function WorkersListPage() {
           setEditError("Only Super Admin can edit supervisors.");
           return;
         }
+        const fullName = String(form.get("full_name") ?? "").trim();
+        const mobile = String(form.get("mobile_number") ?? "").trim();
+        const salary = String(form.get("salary") ?? "").trim();
+        const dailySalary = String(form.get("daily_salary") ?? "").trim();
         await api.updateUser(editTarget.userId, {
-          full_name: String(form.get("full_name") ?? "").trim(),
-          mobile_number: String(form.get("mobile_number") ?? "").trim(),
-          salary: String(form.get("salary") ?? "") || "0",
-          daily_salary: String(form.get("daily_salary") ?? "") || null,
+          ...(fullName ? { full_name: fullName } : {}),
+          ...(mobile ? { mobile_number: mobile } : {}),
+          ...(salary ? { salary } : {}),
+          ...(dailySalary ? { daily_salary: dailySalary } : { daily_salary: null }),
         });
         if (projectId !== currentProjectId) {
           await assignProject.mutateAsync({
@@ -568,22 +613,24 @@ export function WorkersListPage() {
       } else {
         let designation = editDesignationChoice;
         if (editDesignationChoice === CUSTOM_DESIGNATION_VALUE) {
-          designation = editCustomDesignation.trim();
-          if (!designation) {
-            setEditError("Enter a new role name.");
-            return;
-          }
+          designation = editCustomDesignation.trim() || editTarget.designationCode || "LABOUR";
         }
+        const fullName = String(form.get("full_name") ?? "").trim();
+        const mobile = String(form.get("mobile_number") ?? "").trim();
+        const salary = String(form.get("salary") ?? "").trim();
+        const dailySalary = String(form.get("daily_salary") ?? "").trim();
+        const joiningDate = String(form.get("joining_date") ?? "").trim();
+        const status = String(form.get("status") ?? "").trim();
         await updateWorker.mutateAsync({
           id: editTarget.id,
           payload: {
-            full_name: String(form.get("full_name") ?? "").trim(),
-            mobile_number: String(form.get("mobile_number") ?? "").trim(),
-            salary: String(form.get("salary") ?? "") || "0",
-            daily_salary: String(form.get("daily_salary") ?? "") || null,
-            designation,
-            status: String(form.get("status") ?? "ACTIVE") as "ACTIVE" | "INACTIVE",
-            joining_date: String(form.get("joining_date") ?? "") || null,
+            ...(fullName ? { full_name: fullName } : {}),
+            ...(mobile ? { mobile_number: mobile } : {}),
+            ...(salary ? { salary } : {}),
+            ...(dailySalary ? { daily_salary: dailySalary } : { daily_salary: null }),
+            ...(designation ? { designation } : {}),
+            ...(status ? { status: status as "ACTIVE" | "INACTIVE" } : {}),
+            joining_date: joiningDate || null,
           },
         });
         if (projectId !== currentProjectId) {
@@ -672,6 +719,7 @@ export function WorkersListPage() {
 
     return combined.filter((row) => {
       if (designationFilter !== "all" && row.designation !== designationFilter) return false;
+      if (statusFilter !== "all" && row.status !== statusFilter) return false;
       if (siteFilter === "unassigned") return !row.assigned_projects.length;
       if (siteFilter !== "all") {
         const siteId = Number(siteFilter);
@@ -686,12 +734,13 @@ export function WorkersListPage() {
     nameSearch,
     designationFilter,
     siteFilter,
+    statusFilter,
     wageByUserId,
   ]);
 
   const workersPage = useTablePage(rows, {
     pageSize: 100,
-    resetKey: `${nameSearch}-${designationFilter}-${siteFilter}-${isSuperAdmin}`,
+    resetKey: `${nameSearch}-${designationFilter}-${siteFilter}-${statusFilter}-${isSuperAdmin}`,
   });
   const pageIds = workersPage.pageRows.map((worker) => worker.key);
   const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.includes(id));
@@ -700,6 +749,7 @@ export function WorkersListPage() {
     deleteSupervisor.isPending ||
     bulkDeleteWorkers.isPending ||
     bulkDeleteSupervisors.isPending;
+  const assigningBulk = bulkAssignSite.isPending;
 
   function toggle(key: string) {
     setSelected((prev) => (prev.includes(key) ? prev.filter((x) => x !== key) : [...prev, key]));
@@ -730,6 +780,38 @@ export function WorkersListPage() {
     const supervisorIds = selected.filter((key) => key.startsWith("supervisor-")).map((key) => Number(key.replace("supervisor-", "")));
     if (labourIds.length) bulkDeleteWorkers.mutate(labourIds);
     if (supervisorIds.length) bulkDeleteSupervisors.mutate(supervisorIds);
+  }
+
+  function confirmAssignSelected() {
+    if (!selected.length) {
+      setMessage("Select at least one employee to assign.");
+      return;
+    }
+    const labourIds = selected
+      .filter((key) => key.startsWith("labour-"))
+      .map((key) => Number(key.replace("labour-", "")));
+    const supervisorIds = selected
+      .filter((key) => key.startsWith("supervisor-"))
+      .map((key) => Number(key.replace("supervisor-", "")));
+    const projectId = bulkAssignSiteId === "" ? null : Number(bulkAssignSiteId);
+    const siteLabel =
+      projectId == null
+        ? "unassigned"
+        : projectList.find((project) => project.id === projectId)?.name || "selected site";
+    if (supervisorIds.length > 1 && projectId != null) {
+      setMessage("Only one supervisor can be assigned to a site. Select a single supervisor, or assign employees only.");
+      return;
+    }
+    const actionLabel =
+      projectId == null
+        ? `Unassign ${selected.length} selected employee${selected.length === 1 ? "" : "s"} from their sites?`
+        : `Assign ${selected.length} selected employee${selected.length === 1 ? "" : "s"} to ${siteLabel}?`;
+    if (!window.confirm(actionLabel)) return;
+    bulkAssignSite.mutate({
+      project_id: projectId,
+      labour_ids: labourIds,
+      supervisor_ids: supervisorIds,
+    });
   }
 
   return (
@@ -773,18 +855,55 @@ export function WorkersListPage() {
                 </option>
               ))}
             </select>
+            <select
+              className={`${inputClass} !w-32 shrink-0 py-1.5`}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              aria-label="Filter by status"
+            >
+              <option value="all">All statuses</option>
+              <option value="ACTIVE">Active</option>
+              <option value="INACTIVE">Inactive</option>
+            </select>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {selected.length > 0 && (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-60"
-                disabled={deleting}
-                onClick={confirmRemoveSelected}
-              >
-                <Trash2 className="h-4 w-4" />
-                {bulkDeleteWorkers.isPending ? "Removing..." : `Remove selected (${selected.length})`}
-              </button>
+              <>
+                <select
+                  className={`${inputClass} !w-44 shrink-0 py-1.5`}
+                  value={bulkAssignSiteId}
+                  onChange={(e) => setBulkAssignSiteId(e.target.value)}
+                  aria-label="Site for bulk assignment"
+                  disabled={assigningBulk || projects.isLoading}
+                >
+                  <option value="">Unassigned</option>
+                  {projectList.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.code ? `${project.code} · ${project.name}` : project.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-800 hover:bg-violet-100 disabled:opacity-60"
+                  disabled={assigningBulk || deleting}
+                  onClick={confirmAssignSelected}
+                >
+                  <MapPin className="h-4 w-4" />
+                  {assigningBulk ? "Assigning..." : `Assign selected (${selected.length})`}
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-60"
+                  disabled={deleting || assigningBulk}
+                  onClick={confirmRemoveSelected}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {bulkDeleteWorkers.isPending || bulkDeleteSupervisors.isPending
+                    ? "Removing..."
+                    : `Remove selected (${selected.length})`}
+                </button>
+              </>
             )}
             <label className={`${btnSecondaryClass} cursor-pointer`}>
               <Upload className="h-4 w-4" />
@@ -1070,7 +1189,7 @@ export function WorkersListPage() {
               <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{editError}</p>
             )}
             <FormRow label="Full name">
-              <input className={inputClass} name="full_name" defaultValue={editTarget.full_name} required />
+              <input className={inputClass} name="full_name" defaultValue={editTarget.full_name} />
             </FormRow>
             <FormRow label="Mobile">
               <input className={inputClass} name="mobile_number" defaultValue={editTarget.mobile_number ?? ""} />
@@ -1135,7 +1254,6 @@ export function WorkersListPage() {
                       value={editCustomDesignation}
                       onChange={(e) => setEditCustomDesignation(e.target.value)}
                       placeholder="e.g. Mason, Electrician, Welder"
-                      required
                       autoFocus
                     />
                   </FormRow>

@@ -525,7 +525,7 @@ export type Machinery = NamedItem & {
 
 export type MachineryDocument = {
   id: number;
-  document_type: "INSURANCE" | "PERMIT" | "RC" | "OTHER";
+  document_type: "INSURANCE" | "PERMIT" | "FITNESS" | "PUC" | "GREEN_TAX" | "RC" | "OTHER";
   title: string;
   file_url: string | null;
   uploaded_at: string;
