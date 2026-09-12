@@ -361,7 +361,11 @@ function AttendanceCalendar({
               className={`flex items-center justify-center font-black ${cellClass} ${calendarDayStyle(workday, Boolean(dayData))}`}
               title={
                 dayData
-                  ? `Credited workdays: ${formatWorkdayValue(workday)} · ${dayData.working_hours}h${dayData.project_name ? ` · ${dayData.project_name}` : ""}`
+                  ? `Credited workdays: ${formatWorkdayValue(workday)} · ${dayData.working_hours}h${
+                      dayData.project_code || dayData.project_name
+                        ? ` · ${[dayData.project_code, dayData.project_name].filter(Boolean).join(" · ")}`
+                        : ""
+                    }`
                   : "No attendance"
               }
             >
@@ -706,7 +710,8 @@ function ProjectDetail({
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
   const [projectLabourIds, setProjectLabourIds] = useState<number[]>([]);
-  const [projectSupervisorIds, setProjectSupervisorIds] = useState<number[]>([]);
+  const [projectPrimarySupervisorId, setProjectPrimarySupervisorId] = useState<number | "">("");
+  const [projectSecondarySupervisorIds, setProjectSecondarySupervisorIds] = useState<number[]>([]);
   const [teamSyncKey, setTeamSyncKey] = useState("");
   const accessToken = useAppSelector((state) => state.auth.accessToken);
   const canManage = user?.role === "SUPER_ADMIN" || user?.role === "SUPERVISOR";
@@ -761,8 +766,11 @@ function ProjectDetail({
   });
 
   const updateProjectTeam = useMutation({
-    mutationFn: (payload: { labours: number[]; supervisors?: number[] }) =>
-      api.updateProject(projectId, payload),
+    mutationFn: (payload: {
+      labours: number[];
+      supervisors?: number[];
+      primary_supervisor?: number | null;
+    }) => api.updateProject(projectId, payload),
     onSuccess: () => {
       setMessage("Project team updated.");
       queryClient.invalidateQueries({ queryKey: ["project", projectId] });
@@ -820,14 +828,19 @@ function ProjectDetail({
   }
 
   const nextTeamSyncKey = project.data
-    ? `${project.data.id}:${(project.data.labours ?? []).join(",")}:${(project.data.supervisors ?? []).join(",")}`
+    ? `${project.data.id}:${(project.data.labours ?? []).join(",")}:${project.data.primary_supervisor ?? ""}:${(project.data.supervisors ?? []).join(",")}`
     : "";
 
   // Sync editable team selection when server project membership changes (adjust state during render).
   if (nextTeamSyncKey && nextTeamSyncKey !== teamSyncKey) {
     setTeamSyncKey(nextTeamSyncKey);
     setProjectLabourIds(project.data?.labours ?? []);
-    setProjectSupervisorIds((project.data?.supervisors ?? []).slice(0, 1));
+    const primary = project.data?.primary_supervisor ?? (project.data?.supervisors ?? [])[0] ?? "";
+    setProjectPrimarySupervisorId(primary || "");
+    setProjectSecondarySupervisorIds(
+      (project.data?.secondary_supervisors ??
+        (project.data?.supervisors ?? []).filter((id) => id !== primary)) as number[],
+    );
   }
 
   if (project.isLoading) {
@@ -886,19 +899,24 @@ function ProjectDetail({
 
       <ContentCard
         title="Project team"
-        subtitle="Supervisors and workers assigned to this site"
+        subtitle="Set one Primary supervisor, optional Secondary supervisors, and workers"
         actions={
           canManage ? (
             <button
               type="button"
-              onClick={() =>
+              onClick={() => {
+                const primaryId = projectPrimarySupervisorId === "" ? null : Number(projectPrimarySupervisorId);
+                const supervisorIds = [
+                  ...(primaryId ? [primaryId] : []),
+                  ...projectSecondarySupervisorIds.filter((id) => id !== primaryId),
+                ];
                 updateProjectTeam.mutate({
                   labours: projectLabourIds,
                   ...(user?.role === "SUPER_ADMIN"
-                    ? { supervisors: projectSupervisorIds.slice(0, 1) }
+                    ? { supervisors: supervisorIds, primary_supervisor: primaryId }
                     : {}),
-                })
-              }
+                });
+              }}
               disabled={updateProjectTeam.isPending}
               className={btnPrimaryClass}
             >
@@ -917,39 +935,111 @@ function ProjectDetail({
           </div>
         )}
 
+        {(p.primary_supervisor_detail || (p.secondary_supervisor_details ?? []).length > 0) && (
+          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
+            {p.primary_supervisor_detail ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Badge tone="green">Primary</Badge>
+                <span className="font-medium text-gray-900">
+                  {p.primary_supervisor_detail.full_name || p.primary_supervisor_detail.username}
+                </span>
+              </span>
+            ) : (
+              <span className="text-amber-700">No primary supervisor set</span>
+            )}
+            {(p.secondary_supervisor_details ?? []).length > 0 ? (
+              <span className="inline-flex flex-wrap items-center gap-1.5 text-gray-700">
+                <span className="text-gray-400">·</span>
+                <Badge tone="violet">Secondary</Badge>
+                {(p.secondary_supervisor_details ?? [])
+                  .map((s) => s.full_name || s.username)
+                  .join(", ")}
+              </span>
+            ) : null}
+          </div>
+        )}
+
         <div className={`grid gap-6 ${user?.role === "SUPER_ADMIN" && canManage ? "lg:grid-cols-2" : ""}`}>
           {(user?.role === "SUPER_ADMIN" || !canManage) && (
-            <div>
-              <SubsectionTitle>Supervisors</SubsectionTitle>
-              <p className="mt-1 text-xs text-gray-500">
-                Only one supervisor per site. Uncheck the current one to choose someone else. A supervisor can also only
-                belong to one site at a time.
-              </p>
-              <div className="mt-2">
-                {canManage && user?.role === "SUPER_ADMIN" ? (
-                  <MemberPicker
-                    members={allSupervisorOptions}
-                    selected={projectSupervisorIds.slice(0, 1)}
-                    onChange={(ids) => setProjectSupervisorIds(ids.slice(0, 1))}
-                    maxSelected={1}
-                    emptyMessage="No supervisors found. Add them under Employee."
-                    getBadge={(id) => {
-                      const other = supervisorOtherSiteById.get(id);
-                      if (!other || projectSupervisorIds.includes(id)) return null;
-                      return { label: `On ${other}`, tone: "amber" };
-                    }}
-                  />
-                ) : (
-                  <MemberList
-                    members={(p.supervisor_details ?? []).map((supervisor) => ({
-                      id: supervisor.id,
-                      full_name: supervisor.full_name,
-                      username: supervisor.username,
-                      mobile_number: supervisor.mobile_number,
-                    }))}
-                    emptyMessage="No supervisors assigned."
-                  />
-                )}
+            <div className="space-y-5">
+              <div>
+                <SubsectionTitle>Primary supervisor</SubsectionTitle>
+                <p className="mt-1 text-xs text-gray-500">
+                  Choose one primary for this site. Their actions save immediately. A person can be primary on only one
+                  site.
+                </p>
+                <div className="mt-2">
+                  {canManage && user?.role === "SUPER_ADMIN" ? (
+                    <select
+                      className={inputClass}
+                      value={projectPrimarySupervisorId === "" ? "" : String(projectPrimarySupervisorId)}
+                      onChange={(event) => {
+                        const raw = event.target.value;
+                        const next = raw === "" ? ("" as const) : Number(raw);
+                        setProjectPrimarySupervisorId(next);
+                        if (typeof next === "number") {
+                          setProjectSecondarySupervisorIds((prev) => prev.filter((id) => id !== next));
+                        }
+                      }}
+                      aria-label="Primary supervisor"
+                    >
+                      <option value="">No primary supervisor</option>
+                      {allSupervisorOptions.map((supervisor) => {
+                        const other = supervisorOtherSiteById.get(supervisor.id);
+                        const label =
+                          supervisor.full_name || supervisor.username || `Supervisor #${supervisor.id}`;
+                        return (
+                          <option key={supervisor.id} value={supervisor.id}>
+                            {label}
+                            {other && projectPrimarySupervisorId !== supervisor.id ? ` — currently on ${other}` : ""}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  ) : (
+                    <MemberList
+                      members={(p.primary_supervisor_detail
+                        ? [p.primary_supervisor_detail]
+                        : []
+                      ).map((supervisor) => ({
+                        id: supervisor.id,
+                        full_name: supervisor.full_name,
+                        username: supervisor.username,
+                        mobile_number: supervisor.mobile_number,
+                      }))}
+                      emptyMessage="No primary supervisor assigned."
+                      getBadge={() => ({ label: "Primary", tone: "green" })}
+                    />
+                  )}
+                </div>
+              </div>
+              <div>
+                <SubsectionTitle>Secondary supervisors</SubsectionTitle>
+                <p className="mt-1 text-xs text-gray-500">
+                  Optional helpers. Their attendance, fuel, machinery, and expense entries need primary/admin approval.
+                </p>
+                <div className="mt-2">
+                  {canManage && user?.role === "SUPER_ADMIN" ? (
+                    <MemberPicker
+                      members={allSupervisorOptions.filter((s) => s.id !== projectPrimarySupervisorId)}
+                      selected={projectSecondarySupervisorIds}
+                      onChange={setProjectSecondarySupervisorIds}
+                      emptyMessage="No supervisors found. Add them under Employee."
+                      getBadge={() => ({ label: "Secondary", tone: "violet" })}
+                    />
+                  ) : (
+                    <MemberList
+                      members={(p.secondary_supervisor_details ?? []).map((supervisor) => ({
+                        id: supervisor.id,
+                        full_name: supervisor.full_name,
+                        username: supervisor.username,
+                        mobile_number: supervisor.mobile_number,
+                      }))}
+                      emptyMessage="No secondary supervisors assigned."
+                      getBadge={() => ({ label: "Secondary", tone: "violet" })}
+                    />
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -1111,7 +1201,8 @@ function ProjectDetail({
 function ProjectManager({ user }: { user: AuthUser | null }) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
-  const [supervisors, setSupervisors] = useState<number[]>([]);
+  const [primarySupervisor, setPrimarySupervisor] = useState<number | "">("");
+  const [secondarySupervisors, setSecondarySupervisors] = useState<number[]>([]);
   const [labours, setLabours] = useState<number[]>([]);
   const [editingSite, setEditingSite] = useState<Project | null>(null);
   const projects = useQuery<Paginated<Project>>({ queryKey: ["projects"], queryFn: api.projects });
@@ -1138,7 +1229,8 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
     mutationFn: (payload: Parameters<typeof api.createProject>[0]) => api.createProject(payload),
     onSuccess: () => {
       setMessage("Site created successfully.");
-      setSupervisors([]);
+      setPrimarySupervisor("");
+      setSecondarySupervisors([]);
       setLabours([]);
       setEditingSite(null);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -1157,7 +1249,8 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
     }) => api.updateProject(id, payload),
     onSuccess: () => {
       setMessage("Site updated successfully.");
-      setSupervisors([]);
+      setPrimarySupervisor("");
+      setSecondarySupervisors([]);
       setLabours([]);
       setEditingSite(null);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -1173,7 +1266,8 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
       setMessage("Site deleted.");
       if (editingSite) {
         setEditingSite(null);
-        setSupervisors([]);
+        setPrimarySupervisor("");
+        setSecondarySupervisors([]);
         setLabours([]);
       }
       queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -1189,14 +1283,18 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
 
   function startEdit(site: Project) {
     setEditingSite(site);
-    setSupervisors((site.supervisors ?? []).slice(0, 1));
+    const primary = site.primary_supervisor ?? (site.supervisors ?? [])[0] ?? "";
+    const secondaries = (site.secondary_supervisors ?? (site.supervisors ?? []).filter((id) => id !== primary)) as number[];
+    setPrimarySupervisor(primary || "");
+    setSecondarySupervisors(secondaries);
     setLabours([...(site.labours ?? [])]);
     setMessage("");
   }
 
   function cancelEdit() {
     setEditingSite(null);
-    setSupervisors([]);
+    setPrimarySupervisor("");
+    setSecondarySupervisors([]);
     setLabours([]);
   }
 
@@ -1206,6 +1304,11 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
     const startDate = String(form.get("start_date") ?? "").trim();
     const endDate = String(form.get("end_date") ?? "").trim();
     const budget = String(form.get("estimated_budget") ?? "").trim();
+    const primaryId = primarySupervisor === "" ? null : Number(primarySupervisor);
+    const supervisorIds = [
+      ...(primaryId ? [primaryId] : []),
+      ...secondarySupervisors.filter((id) => id !== primaryId),
+    ];
     const payload = {
       name: String(form.get("name") ?? "").trim(),
       code: String(form.get("code") ?? "").trim(),
@@ -1216,7 +1319,8 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
       estimated_budget: budget || "0",
       status: String(form.get("status") ?? "ACTIVE") as Project["status"],
       description: String(form.get("description") ?? ""),
-      supervisors: supervisors.slice(0, 1),
+      supervisors: supervisorIds,
+      primary_supervisor: primaryId,
       labours,
     };
     if (!payload.name) {
@@ -1309,22 +1413,50 @@ function ProjectManager({ user }: { user: AuthUser | null }) {
             </select>
           </Field>
           {user?.role === "SUPER_ADMIN" && (
-            <Field label="Assign supervisor">
-              <p className="mb-2 text-xs text-gray-500">Only one supervisor per site.</p>
-              <MemberPicker
-                members={supervisorList.map((item) => ({
-                  id: item.id,
-                  username: item.username,
-                  full_name: item.full_name,
-                  role: item.role,
-                  mobile_number: item.mobile_number,
-                }))}
-                selected={supervisors.slice(0, 1)}
-                onChange={(ids) => setSupervisors(ids.slice(0, 1))}
-                maxSelected={1}
-                emptyMessage="No supervisors found."
-              />
-            </Field>
+            <div className="md:col-span-2 grid gap-4 md:grid-cols-2">
+              <Field label="Primary supervisor">
+                <p className="mb-2 text-xs text-gray-500">
+                  Choose who owns this site. Primary actions save immediately (one site only).
+                </p>
+                <select
+                  className={inputClass}
+                  value={primarySupervisor === "" ? "" : String(primarySupervisor)}
+                  onChange={(event) => {
+                    const raw = event.target.value;
+                    const next = raw === "" ? ("" as const) : Number(raw);
+                    setPrimarySupervisor(next);
+                    if (typeof next === "number") {
+                      setSecondarySupervisors((prev) => prev.filter((id) => id !== next));
+                    }
+                  }}
+                >
+                  <option value="">No primary supervisor</option>
+                  {supervisorList.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.full_name || item.username}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Secondary supervisors">
+                <p className="mb-2 text-xs text-gray-500">Optional. Their activity needs primary/admin approval.</p>
+                <MemberPicker
+                  members={supervisorList
+                    .filter((item) => item.id !== primarySupervisor)
+                    .map((item) => ({
+                      id: item.id,
+                      username: item.username,
+                      full_name: item.full_name,
+                      role: item.role,
+                      mobile_number: item.mobile_number,
+                    }))}
+                  selected={secondarySupervisors}
+                  onChange={setSecondarySupervisors}
+                  emptyMessage="No supervisors found."
+                  getBadge={() => ({ label: "Secondary", tone: "violet" })}
+                />
+              </Field>
+            </div>
           )}
           {(user?.role === "SUPER_ADMIN" || user?.role === "SUPERVISOR") && (
             <div className="md:col-span-2">
@@ -1953,7 +2085,11 @@ function AttendanceHistoryPage() {
                   <DataTableCell>
                     <Badge tone={workday.tone}>{workday.label}</Badge>
                   </DataTableCell>
-                  <DataTableCell>{record.project_name || "—"}</DataTableCell>
+                  <DataTableCell>
+                    {record.project_code || record.project_name
+                      ? [record.project_code, record.project_name].filter(Boolean).join(" · ")
+                      : "—"}
+                  </DataTableCell>
                   <DataTableCell>{record.attendance_by || "—"}</DataTableCell>
                   <DataTableCell>
                     {mapUrl ? (
@@ -2369,6 +2505,16 @@ function AttendanceManager() {
     mutationFn: ({ overwrite, coords }: { overwrite: boolean; coords?: { latitude?: number; longitude?: number } }) =>
       api.bulkAttendance(buildPayload(overwrite, coords ?? markerCoords)),
     onSuccess: async (result, variables) => {
+      if ("queued" in result && result.queued) {
+        setConfirmOpen(false);
+        setPendingConflicts([]);
+        setMessage(
+          ("detail" in result && typeof result.detail === "string" && result.detail) ||
+            "Submitted for primary supervisor / Super Admin approval.",
+        );
+        queryClient.invalidateQueries({ queryKey: ["activity-requests"] });
+        return;
+      }
       const conflicts = (result.conflicts?.length ? result.conflicts : result.skipped?.filter((s) => s.conflict)) ?? [];
       if (!variables.overwrite && conflicts.length) {
         setPendingConflicts(conflicts);
@@ -3141,7 +3287,17 @@ function OperationsManager({
   });
   const createExpense = useMutation({
     mutationFn: (payload: Parameters<typeof api.createExpense>[0]) => api.createExpense(payload),
-    onSuccess: () => onSuccess("Expense saved for approval.", ["expenses", "reports"]),
+    onSuccess: (result) => {
+      if (result && typeof result === "object" && "queued" in result && result.queued) {
+        onSuccess(
+          ("detail" in result && typeof result.detail === "string" && result.detail) ||
+            "Submitted for primary supervisor / Super Admin approval.",
+          ["activity-requests", "expenses", "reports"],
+        );
+        return;
+      }
+      onSuccess("Expense saved for approval.", ["expenses", "reports"]);
+    },
     onError,
   });
   const approveExpense = useMutation({
@@ -3151,7 +3307,16 @@ function OperationsManager({
   });
   const createMachinery = useMutation({
     mutationFn: (payload: Parameters<typeof api.createMachinery>[0]) => api.createMachinery(payload),
-    onSuccess: () => {
+    onSuccess: (result) => {
+      if (result && typeof result === "object" && "queued" in result && result.queued) {
+        onSuccess(
+          ("detail" in result && typeof result.detail === "string" && result.detail) ||
+            "Submitted for primary supervisor / Super Admin approval.",
+          ["activity-requests", "machinery"],
+        );
+        setMachineModalOpen(false);
+        return;
+      }
       onSuccess("Machinery saved.", ["machinery"]);
       setMachineModalOpen(false);
     },
@@ -3189,7 +3354,16 @@ function OperationsManager({
   });
   const createUsage = useMutation({
     mutationFn: (payload: Parameters<typeof api.createMachineryUsage>[0]) => api.createMachineryUsage(payload),
-    onSuccess: () => {
+    onSuccess: (result) => {
+      if (result && typeof result === "object" && "queued" in result && result.queued) {
+        onSuccess(
+          ("detail" in result && typeof result.detail === "string" && result.detail) ||
+            "Submitted for primary supervisor / Super Admin approval.",
+          ["activity-requests", "reports", "machinery-usage"],
+        );
+        setUsageModalOpen(false);
+        return;
+      }
       onSuccess("Machinery usage recorded.", ["reports", "machinery-usage"]);
       setUsageModalOpen(false);
     },
@@ -3197,7 +3371,18 @@ function OperationsManager({
   });
   const createFuel = useMutation({
     mutationFn: (payload: Parameters<typeof api.createFuelLog>[0]) => api.createFuelLog(payload),
-    onSuccess: () => {
+    onSuccess: (result) => {
+      if (result && typeof result === "object" && "queued" in result && result.queued) {
+        onSuccess(
+          ("detail" in result && typeof result.detail === "string" && result.detail) ||
+            "Submitted for primary supervisor / Super Admin approval.",
+          ["activity-requests", "reports", "fuel-logs"],
+        );
+        setFuelModalOpen(false);
+        setFuelMachineryId("");
+        setPreviousMeter("");
+        return;
+      }
       onSuccess("Fuel log saved.", ["reports", "fuel-logs"]);
       setFuelModalOpen(false);
       setFuelMachineryId("");
@@ -3207,7 +3392,17 @@ function OperationsManager({
   });
   const createMaintenance = useMutation({
     mutationFn: (payload: Parameters<typeof api.createMaintenance>[0]) => api.createMaintenance(payload),
-    onSuccess: () => onSuccess("Maintenance record saved.", ["reports", "maintenance"]),
+    onSuccess: (result) => {
+      if (result && typeof result === "object" && "queued" in result && result.queued) {
+        onSuccess(
+          ("detail" in result && typeof result.detail === "string" && result.detail) ||
+            "Submitted for primary supervisor / Super Admin approval.",
+          ["activity-requests", "reports", "maintenance"],
+        );
+        return;
+      }
+      onSuccess("Maintenance record saved.", ["reports", "maintenance"]);
+    },
     onError,
   });
 

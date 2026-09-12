@@ -333,6 +333,7 @@ export const api = {
     status?: Project["status"];
     description?: string;
     supervisors?: number[];
+    primary_supervisor?: number | null;
     labours?: number[];
   }) =>
     request<Project>("/projects/items/", {
@@ -350,6 +351,7 @@ export const api = {
       end_date: string | null;
       estimated_budget: string;
       supervisors: number[];
+      primary_supervisor: number | null;
       labours: number[];
       status: Project["status"];
       description: string;
@@ -358,6 +360,28 @@ export const api = {
     request<Project>(`/projects/items/${id}/`, {
       method: "PATCH",
       body: JSON.stringify(payload),
+    }),
+  activityRequests: (params?: { status?: string; mine?: boolean }) => {
+    const query = buildListQuery({
+      status: params?.status,
+      mine: params?.mine ? "1" : undefined,
+      page_size: 100,
+    });
+    return request<{ results?: import("@/lib/types").ActivityRequest[] }>(
+      `/operations/activity-requests/${query}`,
+    );
+  },
+  activityRequestPendingCount: () =>
+    request<{ count: number }>("/operations/activity-requests/pending_count/"),
+  approveActivityRequest: (id: number) =>
+    request<import("@/lib/types").ActivityRequest>(`/operations/activity-requests/${id}/approve/`, {
+      method: "POST",
+      body: "{}",
+    }),
+  rejectActivityRequest: (id: number, reason?: string) =>
+    request<import("@/lib/types").ActivityRequest>(`/operations/activity-requests/${id}/reject/`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason || "" }),
     }),
   deleteProject: (id: number) => request<void>(`/projects/items/${id}/`, { method: "DELETE" }),
   tasks: (projectId?: number) =>
@@ -660,7 +684,7 @@ export const api = {
     }),
   expenses: () => request<{ results?: Expense[] }>(`/operations/expenses/${buildListQuery()}`),
   createExpense: (payload: { project: number; amount: string; category: string; description: string }) =>
-    request<Expense>("/operations/expenses/", {
+    request<Expense | { queued: true; detail?: string; request_id?: number }>("/operations/expenses/", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -713,7 +737,10 @@ export const api = {
     document_green_tax?: File;
   }) => {
     const formData = buildMachineryFormData(payload);
-    return request<Machinery>("/operations/machinery/", { method: "POST", body: formData });
+    return request<Machinery | { queued: true; detail?: string; request_id?: number }>(
+      "/operations/machinery/",
+      { method: "POST", body: formData },
+    );
   },
   updateMachinery: (
     id: number,
@@ -903,6 +930,7 @@ export const api = {
     project_id: number | null;
     labour_ids?: number[];
     supervisor_ids?: number[];
+    as_primary?: boolean;
   }) =>
     request<{
       project_id: number | null;
@@ -918,6 +946,7 @@ export const api = {
         project_id: payload.project_id,
         labour_ids: payload.labour_ids ?? [],
         supervisor_ids: payload.supervisor_ids ?? [],
+        as_primary: Boolean(payload.as_primary),
       }),
     }),
   importLabourWorkers: (file: File) => {
@@ -967,6 +996,9 @@ export const api = {
     longitude?: number;
   }) =>
     request<{
+      queued?: boolean;
+      detail?: string;
+      request_id?: number;
       created_count: number;
       updated_count?: number;
       skipped_count: number;

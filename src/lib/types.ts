@@ -57,6 +57,7 @@ export type AttendanceRecord = {
   labour: number;
   project: number | null;
   project_name: string;
+  project_code?: string;
   labour_name: string;
   status: "PUNCHED_IN" | "PUNCHED_OUT";
   approval_status: "PENDING" | "APPROVED" | "REJECTED";
@@ -83,6 +84,8 @@ export type AssignedProject = {
   code: string;
   name: string;
   status: string;
+  /** Present for supervisors: PRIMARY or SECONDARY on this site */
+  supervisor_role?: "PRIMARY" | "SECONDARY" | null;
 };
 
 export type LabourProfile = {
@@ -219,6 +222,7 @@ export type MonthlyAttendance = {
       working_hours: number;
       approval_status: string;
       project_name: string;
+      project_code?: string;
       status: string;
       sessions: number;
     }
@@ -359,10 +363,36 @@ export type Project = {
   status: "DRAFT" | "PLANNING" | "ACTIVE" | "ON_HOLD" | "COMPLETED" | "CANCELLED";
   description: string;
   supervisors: number[];
+  primary_supervisor?: number | null;
+  secondary_supervisors?: number[];
   labours: number[];
   supervisor_details?: UserMini[];
+  primary_supervisor_detail?: UserMini | null;
+  secondary_supervisor_details?: UserMini[];
   labour_details?: UserMini[];
   remaining_budget?: string;
+};
+
+export type ActivityRequest = {
+  id: number;
+  project: number | null;
+  project_name?: string | null;
+  project_code?: string | null;
+  requested_by: number;
+  requested_by_name: string;
+  action_type: string;
+  action_type_label: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  title: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  reviewed_by: number | null;
+  reviewed_by_name?: string;
+  reviewed_at: string | null;
+  rejection_reason: string;
+  result_ref: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type ProjectTask = {

@@ -8,6 +8,7 @@ import {
   Factory,
   Fuel,
   HardHat,
+  Inbox,
   LogOut,
   Minus,
   Package,
@@ -25,8 +26,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { pageBg } from "@/components/ui";
+import { api } from "@/lib/api";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearSession } from "@/store/auth-slice";
 
@@ -43,6 +46,7 @@ type NavGroup = { title: string; items: NavItem[] };
 const PAGE_TITLES: Record<string, string> = {
   "/dashboard": "Dashboard",
   "/projects": "Sites",
+  "/requests": "Activity requests",
   "/materials": "Materials",
   "/vendors": "Vendors",
   "/expenses": "Expenses",
@@ -117,6 +121,14 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
   const canManage = user.role === "SUPER_ADMIN" || user.role === "SUPERVISOR";
   const isSuperAdmin = user.role === "SUPER_ADMIN";
 
+  const pendingCount = useQuery({
+    queryKey: ["activity-requests", "pending-count"],
+    queryFn: api.activityRequestPendingCount,
+    enabled: canManage,
+    refetchInterval: 30_000,
+  });
+  const requestBadge = pendingCount.data?.count ?? 0;
+
   const groups: NavGroup[] = [
     {
       title: "Overview",
@@ -130,6 +142,12 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
               { href: "/projects", label: "Sites", icon: Building2, match: (p: string) => p.startsWith("/projects") },
               { href: "/workers", label: "Employee", icon: Users, match: (p: string) => p.startsWith("/workers") },
               { href: "/attendance", label: "Attendance", icon: Timer, match: (p: string) => p.startsWith("/attendance") },
+              {
+                href: "/requests",
+                label: "Requests",
+                icon: Inbox,
+                match: (p: string) => p.startsWith("/requests"),
+              },
               {
                 href: "/payroll",
                 label: "Payroll",
@@ -250,6 +268,11 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                           >
                             <Icon className="h-4 w-4 shrink-0" />
                             <span className="truncate">{item.label}</span>
+                            {item.href === "/requests" && requestBadge > 0 ? (
+                              <span className="ml-auto inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                                {requestBadge > 99 ? "99+" : requestBadge}
+                              </span>
+                            ) : null}
                           </Link>
                           {item.children?.length ? (
                             <button

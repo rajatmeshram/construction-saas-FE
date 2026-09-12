@@ -245,7 +245,11 @@ function CompactCalendar({
               className={`flex h-7 w-7 items-center justify-center rounded-md text-[10px] font-black ${calendarDayStyle(workday, Boolean(dayData))}`}
               title={
                 dayData && workday != null
-                  ? `${day} ${monthShort} - ${formatWorkdayValue(workday)}day`
+                  ? `${day} ${monthShort} - ${formatWorkdayValue(workday)}day${
+                      dayData.project_code || dayData.project_name
+                        ? ` · ${[dayData.project_code, dayData.project_name].filter(Boolean).join(" · ")}`
+                        : ""
+                    }`
                   : "No attendance"
               }
             >
@@ -277,6 +281,7 @@ export function WorkersListPage() {
   const [editCustomDesignation, setEditCustomDesignation] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [bulkAssignSiteId, setBulkAssignSiteId] = useState("");
+  const [bulkAssignAsPrimary, setBulkAssignAsPrimary] = useState(true);
   const [assigningKey, setAssigningKey] = useState<string | null>(null);
   const createFormRef = useRef<HTMLFormElement>(null);
   const editFormRef = useRef<HTMLFormElement>(null);
@@ -446,6 +451,7 @@ export function WorkersListPage() {
       setSelected([]);
       setBulkAssignSiteId("");
       queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["project"] });
       queryClient.invalidateQueries({ queryKey: ["labour-workers"] });
       queryClient.invalidateQueries({ queryKey: ["supervisors"] });
     },
@@ -457,37 +463,94 @@ export function WorkersListPage() {
       userId,
       kind,
       projectId,
+      asPrimary,
     }: {
       userId: number;
       kind: "labour" | "supervisor";
       projectId: number | null;
+      asPrimary?: boolean;
     }) => {
-      const field = kind === "supervisor" ? "supervisors" : "labours";
       const working: Project[] = (projects.data?.results ?? []).map((project) => ({
         ...project,
         labours: [...(project.labours ?? [])],
         supervisors: [...(project.supervisors ?? [])],
+        primary_supervisor: project.primary_supervisor ?? null,
       }));
-      for (const project of working) {
-        const current = project[field];
-        const shouldHave = projectId !== null && project.id === projectId;
-        const next = shouldHave
-          ? kind === "supervisor"
-            ? [userId]
-            : current.includes(userId)
+
+      if (kind === "labour") {
+        for (const project of working) {
+          const current = project.labours;
+          const shouldHave = projectId !== null && project.id === projectId;
+          const next = shouldHave
+            ? current.includes(userId)
               ? current
               : [...current, userId]
-          : current.filter((id) => id !== userId);
-        const unchanged =
-          next.length === current.length && next.every((id, index) => id === current[index]);
-        if (unchanged) continue;
-        await api.updateProject(project.id, { [field]: next });
-        project[field] = next;
+            : current.filter((id) => id !== userId);
+          const unchanged =
+            next.length === current.length && next.every((id, index) => id === current[index]);
+          if (unchanged) continue;
+          await api.updateProject(project.id, { labours: next });
+          project.labours = next;
+        }
+        return;
+      }
+
+      // Supervisor: merge correctly and set primary when needed
+      if (projectId === null) {
+        for (const project of working) {
+          if (!project.supervisors.includes(userId)) continue;
+          const remaining = project.supervisors.filter((id) => id !== userId);
+          let primary = project.primary_supervisor ?? null;
+          if (primary === userId) {
+            primary = remaining[0] ?? null;
+          } else if (primary != null && !remaining.includes(primary)) {
+            primary = remaining[0] ?? null;
+          }
+          await api.updateProject(project.id, {
+            supervisors: remaining,
+            primary_supervisor: primary,
+          });
+        }
+        return;
+      }
+
+      const target = working.find((project) => project.id === projectId);
+      if (!target) {
+        throw new Error("Site not found.");
+      }
+
+      const supervisors = target.supervisors.includes(userId)
+        ? [...target.supervisors]
+        : [...target.supervisors, userId];
+      const makePrimary = Boolean(asPrimary) || !target.primary_supervisor;
+      const primary = makePrimary ? userId : (target.primary_supervisor as number);
+
+      await api.updateProject(projectId, {
+        supervisors,
+        primary_supervisor: primary,
+      });
+
+      // Keep workers-directory UX to one site: remove from other sites
+      for (const project of working) {
+        if (project.id === projectId) continue;
+        if (!project.supervisors.includes(userId)) continue;
+        const remaining = project.supervisors.filter((id) => id !== userId);
+        let otherPrimary = project.primary_supervisor ?? null;
+        if (otherPrimary === userId) {
+          otherPrimary = remaining[0] ?? null;
+        } else if (otherPrimary != null && !remaining.includes(otherPrimary)) {
+          otherPrimary = remaining[0] ?? null;
+        }
+        await api.updateProject(project.id, {
+          supervisors: remaining,
+          primary_supervisor: otherPrimary,
+        });
       }
     },
     onSuccess: () => {
       setMessage("Project assignment updated.");
       queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["project"] });
       queryClient.invalidateQueries({ queryKey: ["labour-workers"] });
       queryClient.invalidateQueries({ queryKey: ["supervisors"] });
     },
@@ -601,10 +664,20 @@ export function WorkersListPage() {
           ...(dailySalary ? { daily_salary: dailySalary } : { daily_salary: null }),
         });
         if (projectId !== currentProjectId) {
+          const site = projectList.find((project) => project.id === projectId);
+          const asPrimary =
+            projectId == null
+              ? false
+              : !site?.primary_supervisor || site.primary_supervisor === editTarget.userId
+                ? true
+                : window.confirm(
+                    `Set ${editTarget.full_name} as PRIMARY supervisor for this site?\n\nOK = Primary\nCancel = Secondary`,
+                  );
           await assignProject.mutateAsync({
             userId: editTarget.userId,
             kind: "supervisor",
             projectId: Number.isFinite(projectId) ? projectId : null,
+            asPrimary,
           });
         }
         queryClient.invalidateQueries({ queryKey: ["supervisors"] });
@@ -798,19 +871,22 @@ export function WorkersListPage() {
       projectId == null
         ? "unassigned"
         : projectList.find((project) => project.id === projectId)?.name || "selected site";
-    if (supervisorIds.length > 1 && projectId != null) {
-      setMessage("Only one supervisor can be assigned to a site. Select a single supervisor, or assign employees only.");
-      return;
-    }
+    const roleNote =
+      projectId != null && supervisorIds.length
+        ? bulkAssignAsPrimary
+          ? " First selected supervisor becomes Primary; others are Secondary."
+          : " Supervisors are added as Secondary (Primary kept if the site already has one)."
+        : "";
     const actionLabel =
       projectId == null
         ? `Unassign ${selected.length} selected employee${selected.length === 1 ? "" : "s"} from their sites?`
-        : `Assign ${selected.length} selected employee${selected.length === 1 ? "" : "s"} to ${siteLabel}?`;
+        : `Assign ${selected.length} selected employee${selected.length === 1 ? "" : "s"} to ${siteLabel}?${roleNote}`;
     if (!window.confirm(actionLabel)) return;
     bulkAssignSite.mutate({
       project_id: projectId,
       labour_ids: labourIds,
       supervisor_ids: supervisorIds,
+      as_primary: projectId != null && supervisorIds.length > 0 ? bulkAssignAsPrimary : false,
     });
   }
 
@@ -883,6 +959,18 @@ export function WorkersListPage() {
                     </option>
                   ))}
                 </select>
+                {selected.some((key) => key.startsWith("supervisor-")) && bulkAssignSiteId !== "" ? (
+                  <select
+                    className={`${inputClass} !w-48 shrink-0 py-1.5`}
+                    value={bulkAssignAsPrimary ? "primary" : "secondary"}
+                    onChange={(e) => setBulkAssignAsPrimary(e.target.value === "primary")}
+                    aria-label="Supervisor role on site"
+                    disabled={assigningBulk}
+                  >
+                    <option value="primary">As Primary supervisor</option>
+                    <option value="secondary">As Secondary supervisor</option>
+                  </select>
+                ) : null}
                 <button
                   type="button"
                   className="inline-flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-800 hover:bg-violet-100 disabled:opacity-60"
@@ -976,36 +1064,78 @@ export function WorkersListPage() {
                 <DataTableCell>{worker.mobile_number || "—"}</DataTableCell>
                 <DataTableCell>{worker.designation}</DataTableCell>
                 <DataTableCell>
-                  <select
-                    className={`${inputClass} min-w-[10rem] py-1.5 text-sm`}
-                    aria-label={`Project for ${worker.full_name}`}
-                    disabled={projectBusy || projects.isLoading || (worker.kind === "supervisor" && !isSuperAdmin)}
-                    value={projectValue}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      if (raw === "multi") return;
-                      const nextId = raw === "" ? null : Number(raw);
-                      if (assigned.length === 1 && nextId === assigned[0].id) return;
-                      if (assigned.length === 0 && nextId === null) return;
-                      setAssigningKey(worker.key);
-                      assignProject.mutate(
-                        { userId: worker.userId, kind: worker.kind, projectId: nextId },
-                        { onSettled: () => setAssigningKey(null) },
-                      );
-                    }}
-                  >
-                    <option value="">Unassigned</option>
-                    {assigned.length > 1 ? (
-                      <option value="multi" disabled>
-                        Multiple ({assigned.length}) — choose one
-                      </option>
+                  <div className="space-y-1.5">
+                    {worker.kind === "supervisor" && assigned.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {assigned.map((project) => (
+                          <Badge
+                            key={project.id}
+                            tone={project.supervisor_role === "PRIMARY" ? "green" : "violet"}
+                          >
+                            {project.supervisor_role === "PRIMARY" ? "Primary" : "Secondary"}
+                            {project.code ? ` · ${project.code}` : ""}
+                          </Badge>
+                        ))}
+                      </div>
                     ) : null}
-                    {projectList.map((project) => (
-                      <option key={project.id} value={project.id}>
-                        {project.code ? `${project.code} · ${project.name}` : project.name}
-                      </option>
-                    ))}
-                  </select>
+                    <select
+                      className={`${inputClass} min-w-[10rem] py-1.5 text-sm`}
+                      aria-label={`Project for ${worker.full_name}`}
+                      disabled={projectBusy || projects.isLoading || (worker.kind === "supervisor" && !isSuperAdmin)}
+                      value={projectValue}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (raw === "multi") return;
+                        const nextId = raw === "" ? null : Number(raw);
+                        if (assigned.length === 1 && nextId === assigned[0].id) return;
+                        if (assigned.length === 0 && nextId === null) return;
+                        let asPrimary: boolean | undefined;
+                        if (worker.kind === "supervisor" && nextId != null) {
+                          const site = projectList.find((project) => project.id === nextId);
+                          const siteHasPrimary = Boolean(site?.primary_supervisor);
+                          // Make primary if site has none, or ask when site already has someone else
+                          if (!siteHasPrimary) {
+                            asPrimary = true;
+                          } else if (site?.primary_supervisor === worker.userId) {
+                            asPrimary = true;
+                          } else {
+                            asPrimary = window.confirm(
+                              `Set ${worker.full_name} as PRIMARY supervisor for this site?\n\nOK = Primary (replaces current primary)\nCancel = Secondary`,
+                            );
+                          }
+                        }
+                        setAssigningKey(worker.key);
+                        assignProject.mutate(
+                          {
+                            userId: worker.userId,
+                            kind: worker.kind,
+                            projectId: nextId,
+                            asPrimary,
+                          },
+                          { onSettled: () => setAssigningKey(null) },
+                        );
+                      }}
+                    >
+                      <option value="">Unassigned</option>
+                      {assigned.length > 1 ? (
+                        <option value="multi" disabled>
+                          Multiple ({assigned.length}) — choose one
+                        </option>
+                      ) : null}
+                      {projectList.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.code ? `${project.code} · ${project.name}` : project.name}
+                          {worker.kind === "supervisor" && project.primary_supervisor
+                            ? project.primary_supervisor === worker.userId
+                              ? " (you are primary)"
+                              : " (has primary)"
+                            : worker.kind === "supervisor"
+                              ? " (needs primary)"
+                              : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </DataTableCell>
                 <DataTableCell>{worker.salary != null && worker.salary !== "" ? formatCurrency(worker.salary) : "—"}</DataTableCell>
                 <DataTableCell>
@@ -1859,7 +1989,11 @@ export function WorkerAttendanceHistoryPage({ workerId }: { workerId: number }) 
                       : record.attendance_mark || "PRESENT"}
                   </Badge>
                 </DataTableCell>
-                <DataTableCell>{record.project_name || "—"}</DataTableCell>
+                <DataTableCell>
+                  {record.project_code || record.project_name
+                    ? [record.project_code, record.project_name].filter(Boolean).join(" · ")
+                    : "—"}
+                </DataTableCell>
               </DataTableRow>
             ))}
           </DataTableBody>
@@ -1905,6 +2039,14 @@ export function BulkAttendancePage() {
   const bulk = useMutation({
     mutationFn: api.bulkAttendance,
     onSuccess: (result) => {
+      if ("queued" in result && result.queued) {
+        setMessage(
+          ("detail" in result && typeof result.detail === "string" && result.detail) ||
+            "Submitted for primary supervisor / Super Admin approval.",
+        );
+        queryClient.invalidateQueries({ queryKey: ["activity-requests"] });
+        return;
+      }
       if (result.skipped_count > 0 && result.skipped?.length) {
         const reasons = result.skipped
           .map((item) => {
