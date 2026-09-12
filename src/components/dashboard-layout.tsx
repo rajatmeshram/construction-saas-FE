@@ -114,20 +114,20 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
     }
   }, [hydrated, accessToken, user, pathname, router]);
 
+  const canManage = user?.role === "SUPER_ADMIN" || user?.role === "SUPERVISOR";
+  const pendingCount = useQuery({
+    queryKey: ["activity-requests", "pending-count"],
+    queryFn: api.activityRequestPendingCount,
+    enabled: Boolean(hydrated && accessToken && canManage),
+    refetchInterval: 30_000,
+  });
+  const requestBadge = pendingCount.data?.count ?? 0;
+
   if (!hydrated || !user || !accessToken) {
     return null;
   }
 
-  const canManage = user.role === "SUPER_ADMIN" || user.role === "SUPERVISOR";
   const isSuperAdmin = user.role === "SUPER_ADMIN";
-
-  const pendingCount = useQuery({
-    queryKey: ["activity-requests", "pending-count"],
-    queryFn: api.activityRequestPendingCount,
-    enabled: canManage,
-    refetchInterval: 30_000,
-  });
-  const requestBadge = pendingCount.data?.count ?? 0;
 
   const groups: NavGroup[] = [
     {
