@@ -2485,31 +2485,6 @@ export function SupervisorProfilePage({ supervisorId }: { supervisorId: number }
 }
 
 export function SupervisorAttendancePage() {
-  const user = useAppSelector((state) => state.auth.user);
-  const [message, setMessage] = useState("");
-  const [selectedProject, setSelectedProject] = useState<number | null>(null);
-
-  const projects = useQuery({ queryKey: ["projects"], queryFn: api.projects });
-  const current = useQuery({ queryKey: ["current-attendance"], queryFn: api.currentAttendance, refetchInterval: 15000 });
-
-  const punchIn = useMutation({
-    mutationFn: () => {
-      if (!selectedProject) throw new Error("Select a project.");
-      return api.supervisorPunchIn({ project: selectedProject });
-    },
-    onSuccess: () => setMessage("Punched in. Awaiting Super Admin approval after punch out."),
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Punch in failed."),
-  });
-
-  const punchOut = useMutation({
-    mutationFn: () => api.supervisorPunchOut({}),
-    onSuccess: () => setMessage("Punched out. Awaiting Super Admin approval."),
-    onError: (err) => setMessage(err instanceof Error ? err.message : "Punch out failed."),
-  });
-
-  const projectList = projects.data?.results ?? [];
-  const active = current.data?.active;
-
   return (
     <section className="space-y-4">
       <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
@@ -2517,33 +2492,12 @@ export function SupervisorAttendancePage() {
           <Timer className="h-6 w-6 text-safety" />
           <div>
             <h2 className="text-base font-semibold text-coal">Supervisor Attendance</h2>
-            <p className="text-sm text-gray-500">Punch in/out requires Super Admin approval.</p>
+            <p className="text-sm text-gray-500">
+              Use the Check in / Check out button in the top bar. It stays available on every page.
+              After 9 hours without checkout it switches to Hold so you can send a reason to Super Admin.
+            </p>
           </div>
         </div>
-        {message && <p className="mt-4 rounded-2xl bg-safety/15 px-4 py-3 text-sm font-semibold text-coal">{message}</p>}
-
-        {!active ? (
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
-            <select className={inputClass} value={selectedProject ?? ""} onChange={(e) => setSelectedProject(Number(e.target.value))}>
-              <option value="">Select project</option>
-              {projectList.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-            <button type="button" onClick={() => punchIn.mutate()} className="rounded-2xl bg-green-600 px-5 py-3 font-bold text-white" disabled={punchIn.isPending}>
-              Punch In
-            </button>
-          </div>
-        ) : (
-          <div className="mt-6">
-            <p className="text-sm text-gray-600">
-              On site since {formatDateTime(current.data?.attendance?.punch_in_at)} · {current.data?.attendance?.project_name}
-            </p>
-            <button type="button" onClick={() => punchOut.mutate()} className="mt-4 rounded-2xl bg-red-600 px-5 py-3 font-bold text-white" disabled={punchOut.isPending}>
-              Punch Out
-            </button>
-          </div>
-        )}
       </div>
     </section>
   );

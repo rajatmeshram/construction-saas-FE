@@ -1020,23 +1020,61 @@ export const api = {
       }>;
       needs_confirmation?: boolean;
     }>("/attendance/records/bulk/", { method: "POST", body: JSON.stringify(payload) }),
-  supervisorPunchIn: (payload: { project: number; latitude?: number; longitude?: number; selfie?: File }) => {
-    const formData = new FormData();
-    formData.append("project", String(payload.project));
-    const lat = roundCoord(payload.latitude);
-    const lng = roundCoord(payload.longitude);
-    if (lat != null) formData.append("punch_in_latitude", String(lat));
-    if (lng != null) formData.append("punch_in_longitude", String(lng));
-    if (payload.selfie) formData.append("punch_in_selfie", payload.selfie);
-    return request<AttendanceRecord>("/attendance/records/supervisor_punch_in/", { method: "POST", body: formData });
+  supervisorPunchIn: (payload: { project?: number; latitude?: number; longitude?: number; selfie?: File }) => {
+    if (payload.selfie) {
+      const formData = new FormData();
+      if (payload.project) formData.append("project", String(payload.project));
+      const lat = roundCoord(payload.latitude);
+      const lng = roundCoord(payload.longitude);
+      if (lat != null) formData.append("punch_in_latitude", String(lat));
+      if (lng != null) formData.append("punch_in_longitude", String(lng));
+      formData.append("punch_in_selfie", payload.selfie);
+      return request<AttendanceRecord>("/attendance/records/supervisor_punch_in/", { method: "POST", body: formData });
+    }
+    return request<AttendanceRecord>("/attendance/records/supervisor_punch_in/", {
+      method: "POST",
+      body: JSON.stringify({
+        project: payload.project ?? null,
+        punch_in_latitude: roundCoord(payload.latitude) ?? null,
+        punch_in_longitude: roundCoord(payload.longitude) ?? null,
+      }),
+    });
   },
   supervisorPunchOut: (payload: { latitude?: number; longitude?: number; selfie?: File }) => {
-    const formData = new FormData();
-    const lat = roundCoord(payload.latitude);
-    const lng = roundCoord(payload.longitude);
-    if (lat != null) formData.append("punch_out_latitude", String(lat));
-    if (lng != null) formData.append("punch_out_longitude", String(lng));
-    if (payload.selfie) formData.append("punch_out_selfie", payload.selfie);
-    return request<AttendanceRecord>("/attendance/records/supervisor_punch_out/", { method: "POST", body: formData });
+    if (payload.selfie) {
+      const formData = new FormData();
+      const lat = roundCoord(payload.latitude);
+      const lng = roundCoord(payload.longitude);
+      if (lat != null) formData.append("punch_out_latitude", String(lat));
+      if (lng != null) formData.append("punch_out_longitude", String(lng));
+      formData.append("punch_out_selfie", payload.selfie);
+      return request<AttendanceRecord>("/attendance/records/supervisor_punch_out/", { method: "POST", body: formData });
+    }
+    return request<AttendanceRecord>("/attendance/records/supervisor_punch_out/", {
+      method: "POST",
+      body: JSON.stringify({
+        punch_out_latitude: roundCoord(payload.latitude) ?? null,
+        punch_out_longitude: roundCoord(payload.longitude) ?? null,
+      }),
+    });
   },
+  supervisorHoldRequest: (payload: { reason: string; checkout_at?: string; latitude?: number; longitude?: number }) =>
+    request<AttendanceRecord>("/attendance/records/supervisor_hold_request/", {
+      method: "POST",
+      body: JSON.stringify({
+        reason: payload.reason,
+        checkout_at: payload.checkout_at ?? null,
+        punch_out_latitude: roundCoord(payload.latitude) ?? null,
+        punch_out_longitude: roundCoord(payload.longitude) ?? null,
+      }),
+    }),
+  supervisorCheckins: (date: string) =>
+    request<{ date: string; results: AttendanceRecord[] }>(
+      `/attendance/records/supervisor_checkins/${buildListQuery({ date })}`,
+    ),
+  reviewSupervisorCheckin: (id: number, action: "accept" | "reject") =>
+    request<AttendanceRecord>(`/attendance/records/${id}/supervisor_checkin_review/`, {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    }),
 };

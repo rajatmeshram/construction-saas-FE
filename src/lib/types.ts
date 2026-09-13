@@ -69,6 +69,8 @@ export type AttendanceRecord = {
   punch_out_longitude: string | null;
   punch_in_selfie_url: string | null;
   punch_out_selfie_url: string | null;
+  punch_in_location?: string;
+  punch_out_location?: string;
   working_hours: number;
   extra_hours?: number;
   entry_type?: "MOBILE" | "MANUAL" | "SUPERVISOR_SELF" | "BULK";
@@ -77,6 +79,12 @@ export type AttendanceRecord = {
   notes?: string;
   attendance_by?: string | null;
   approved_by?: number | null;
+  checkout_state?: "YET_TO_CHECKOUT" | "HOLD" | "CHECKED_OUT";
+  assigned_sites?: string;
+  on_hold?: boolean;
+  hold_reason?: string;
+  hold_requested_at?: string | null;
+  claimed_checkout_at?: string | null;
 };
 
 export type AssignedProject = {

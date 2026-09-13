@@ -20,6 +20,7 @@ import {
   Wallet,
   Wrench,
   IndianRupee,
+  MapPin,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
@@ -29,6 +30,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { pageBg } from "@/components/ui";
+import { SupervisorCheckInBar } from "@/components/supervisor-checkin-bar";
 import { api } from "@/lib/api";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearSession } from "@/store/auth-slice";
@@ -55,6 +57,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/machinery/usage": "Usage",
   "/machinery/maintenance": "Maintenance",
   "/attendance": "Attendance",
+  "/attendance/supervisors": "Supervisor Check-in",
   "/attendance/bulk": "Bulk Attendance",
   "/attendance/history": "Attendance Records",
   "/payroll": "Payroll",
@@ -69,6 +72,7 @@ function pageTitle(pathname: string) {
   if (pathname.startsWith("/projects/")) return "Site Detail";
   if (pathname === "/attendance/bulk") return "Bulk Attendance";
   if (pathname === "/attendance/history") return "Attendance Records";
+  if (pathname === "/attendance/supervisors") return "Supervisor Check-in";
   if (pathname.startsWith("/attendance/")) return "Attendance Detail";
   if (pathname === "/payroll/sheets/browse") return "All Salary Sheets";
   if (pathname === "/payroll/site-sheets/browse") return "Site Salary Sheets";
@@ -141,7 +145,22 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
             items: [
               { href: "/projects", label: "Sites", icon: Building2, match: (p: string) => p.startsWith("/projects") },
               { href: "/workers", label: "Employee", icon: Users, match: (p: string) => p.startsWith("/workers") },
-              { href: "/attendance", label: "Attendance", icon: Timer, match: (p: string) => p.startsWith("/attendance") },
+              {
+                href: "/attendance",
+                label: "Attendance",
+                icon: Timer,
+                match: (p: string) => p.startsWith("/attendance") && !p.startsWith("/attendance/supervisors"),
+              },
+              ...(isSuperAdmin
+                ? [
+                    {
+                      href: "/attendance/supervisors",
+                      label: "Supervisor Check-in",
+                      icon: MapPin,
+                      match: (p: string) => p.startsWith("/attendance/supervisors"),
+                    },
+                  ]
+                : []),
               {
                 href: "/requests",
                 label: "Requests",
@@ -332,10 +351,15 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/90 px-6 py-3 backdrop-blur">
-            <h1 className="text-lg font-semibold text-gray-900">{title}</h1>
-            <p className="text-xs text-gray-500">
-              {user.full_name || user.username} · {(user.role === "LABOUR" ? "EMPLOYEE" : user.role).replace("_", " ")}
-            </p>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h1 className="text-lg font-semibold text-gray-900">{title}</h1>
+                <p className="text-xs text-gray-500">
+                  {user.full_name || user.username} · {(user.role === "LABOUR" ? "EMPLOYEE" : user.role).replace("_", " ")}
+                </p>
+              </div>
+              {user.role === "SUPERVISOR" ? <SupervisorCheckInBar /> : null}
+            </div>
           </header>
           <section className="flex-1 px-6 py-5">{children}</section>
         </div>
