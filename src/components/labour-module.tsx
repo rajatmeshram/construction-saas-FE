@@ -583,11 +583,18 @@ export function WorkersListPage() {
       }
       const parts = fullName.split(/\s+/, 2);
       const usernameBase = (mobile || fullName.replace(/\s+/g, "").toLowerCase() || `sup${Date.now()}`).slice(0, 140);
-      const password =
-        mobile.length >= 8 ? mobile : `Sup${Date.now().toString().slice(-8)}`;
+      const passwordInput = String(form.get("password") ?? "").trim();
+      if (!passwordInput) {
+        setCreateError("Enter a password for the supervisor login.");
+        return;
+      }
+      if (passwordInput.length < 6) {
+        setCreateError("Password must be at least 6 characters.");
+        return;
+      }
       createSupervisor.mutate({
         username: usernameBase,
-        password,
+        password: passwordInput,
         first_name: parts[0] || "Supervisor",
         last_name: parts[1] || "",
         email,
@@ -1264,6 +1271,19 @@ export function WorkersListPage() {
                 placeholder="e.g. Mason, Electrician, Welder"
                 required
                 autoFocus
+              />
+            </FormRow>
+          ) : null}
+          {designationChoice === "SUPERVISOR" ? (
+            <FormRow label="Password">
+              <input
+                className={inputClass}
+                name="password"
+                type="text"
+                autoComplete="new-password"
+                required
+                minLength={6}
+                placeholder="Login password for this supervisor"
               />
             </FormRow>
           ) : null}
