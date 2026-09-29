@@ -3927,7 +3927,7 @@ function OperationsManager({
                           {item.owner_name ? <p className="text-xs font-normal text-gray-500">Owner: {item.owner_name}</p> : null}
                         </DataTableCell>
                         <DataTableCell className="text-sm text-gray-700">{item.driver_name || "—"}</DataTableCell>
-                        <DataTableCell className="text-xs">
+                        <DataTableCell className="text-sm font-medium text-gray-900">
                           <p>{item.vehicle_number || "—"}</p>
                         </DataTableCell>
                         <DataTableCell>
@@ -3989,7 +3989,11 @@ function OperationsManager({
                           </div>
                         </DataTableCell>
                         <DataTableCell>
-                          <OptionalExpiryCell date={item.mv_tax_validity_date} />
+                          <OptionalExpiryCell
+                            date={item.mv_tax_validity_date}
+                            downloadHref={machineryDocHref(item, "MV_TAX")}
+                            downloadLabel="MV tax"
+                          />
                         </DataTableCell>
                         <DataTableCell>
                           <OptionalExpiryCell

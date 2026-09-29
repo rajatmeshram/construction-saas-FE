@@ -157,6 +157,7 @@ function docTypeLabel(type: MachineryDocument["document_type"]) {
     PERMIT: "Permit",
     FITNESS: "Fitness",
     PUC: "PUC",
+    MV_TAX: "MV tax",
     GREEN_TAX: "Green tax",
     RC: "RC",
     OTHER: "Other",
@@ -495,7 +496,7 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
           </div>
           <div className="rounded-lg bg-gray-50 p-3">
             <p className="text-[10px] font-bold uppercase text-gray-500">Vehicle No.</p>
-            <p className="mt-1 font-semibold">{item.vehicle_number || "—"}</p>
+            <p className="mt-1 text-[18px] font-semibold">{item.vehicle_number || "—"}</p>
           </div>
           <div className="rounded-lg bg-gray-50 p-3">
             <p className="text-[10px] font-bold uppercase text-gray-500">Vehicle class</p>
@@ -683,6 +684,7 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
                 <option value="PERMIT">Permit</option>
                 <option value="FITNESS">Fitness</option>
                 <option value="PUC">PUC</option>
+                <option value="MV_TAX">MV tax</option>
                 <option value="GREEN_TAX">Green tax</option>
                 <option value="RC">Registration (RC)</option>
                 <option value="OTHER">Other</option>
