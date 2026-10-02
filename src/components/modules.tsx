@@ -3414,9 +3414,11 @@ function OperationsManager({
   const machineryList = machinery.data?.results ?? [];
   const driverList = drivers.data?.results ?? [];
   const filteredMachineryList = machineryList.filter((item) => {
-    const vehicleQuery = machineryVehicleQuery.trim().toLowerCase();
-    if (vehicleQuery && !(item.vehicle_number || "").toLowerCase().includes(vehicleQuery)) {
-      return false;
+    const searchQuery = machineryVehicleQuery.trim().toLowerCase();
+    if (searchQuery) {
+      const vehicleMatch = (item.vehicle_number || "").toLowerCase().includes(searchQuery);
+      const ownerMatch = (item.owner_name || "").toLowerCase().includes(searchQuery);
+      if (!vehicleMatch && !ownerMatch) return false;
     }
     return matchesMachineryCompliance(item, machineryComplianceFilter, machineryExpiryFilter);
   });
@@ -3850,12 +3852,12 @@ function OperationsManager({
                       </select>
                     </label>
                     <label className="block">
-                      <span className="text-xs font-medium text-gray-600">Vehicle number</span>
+                      <span className="text-xs font-medium text-gray-600">Search</span>
                       <input
                         className={`${inputClass} mt-1 min-w-[10rem]`}
                         value={machineryVehicleQuery}
                         onChange={(event) => setMachineryVehicleQuery(event.target.value)}
-                        placeholder="Search vehicle no."
+                        placeholder="Vehicle no. or owner"
                       />
                     </label>
                     <p className="pb-2 text-sm text-gray-500">
@@ -3896,7 +3898,6 @@ function OperationsManager({
                         />
                       </th>
                       <th className="px-4 py-2.5">Name</th>
-                      <th className="px-4 py-2.5">Driver</th>
                       <th className="px-4 py-2.5">Vehicle</th>
                       <th className="px-4 py-2.5">Insurance</th>
                       <th className="px-4 py-2.5">Permit</th>
@@ -3905,6 +3906,7 @@ function OperationsManager({
                       <th className="px-4 py-2.5">MV tax</th>
                       <th className="px-4 py-2.5">Green tax</th>
                       <th className="px-4 py-2.5">HSRP</th>
+                      <th className="px-4 py-2.5">Driver</th>
                       <th className="px-4 py-2.5">Status</th>
                       <th className="px-4 py-2.5">Actions</th>
                     </tr>
@@ -3926,7 +3928,6 @@ function OperationsManager({
                           <p className="text-xs font-normal text-gray-500">{item.machine_type}</p>
                           {item.owner_name ? <p className="text-xs font-normal text-gray-500">Owner: {item.owner_name}</p> : null}
                         </DataTableCell>
-                        <DataTableCell className="text-sm text-gray-700">{item.driver_name || "—"}</DataTableCell>
                         <DataTableCell className="text-sm font-medium text-gray-900">
                           <p>{item.vehicle_number || "—"}</p>
                         </DataTableCell>
@@ -4005,6 +4006,7 @@ function OperationsManager({
                         <DataTableCell>
                           <Badge tone={item.hsrp_done ? "green" : "amber"}>{item.hsrp_done ? "Done" : "Pending"}</Badge>
                         </DataTableCell>
+                        <DataTableCell className="text-sm text-gray-700">{item.driver_name || "—"}</DataTableCell>
                         <DataTableCell>
                           <Badge tone={item.active ? "green" : "gray"}>{item.active ? "Active" : "Inactive"}</Badge>
                         </DataTableCell>
