@@ -3223,6 +3223,7 @@ function OperationsManager({
   const [fuelModalOpen, setFuelModalOpen] = useState(false);
   const [machineModalOpen, setMachineModalOpen] = useState(false);
   const [usageModalOpen, setUsageModalOpen] = useState(false);
+  const [editingUsage, setEditingUsage] = useState<MachineryUsage | null>(null);
   const [fuelMachineryId, setFuelMachineryId] = useState("");
   const [previousMeter, setPreviousMeter] = useState("");
   const [machineryComplianceFilter, setMachineryComplianceFilter] = useState<MachineryComplianceKey>("all");
@@ -3366,7 +3367,23 @@ function OperationsManager({
       }
       onSuccess("Machinery usage recorded.", ["reports", "machinery-usage"]);
       setUsageModalOpen(false);
+      setEditingUsage(null);
     },
+    onError,
+  });
+  const updateUsage = useMutation({
+    mutationFn: ({ id, payload }: { id: number; payload: Parameters<typeof api.updateMachineryUsage>[1] }) =>
+      api.updateMachineryUsage(id, payload),
+    onSuccess: () => {
+      onSuccess("Usage updated.", ["reports", "machinery-usage"]);
+      setUsageModalOpen(false);
+      setEditingUsage(null);
+    },
+    onError,
+  });
+  const deleteUsage = useMutation({
+    mutationFn: api.deleteMachineryUsage,
+    onSuccess: () => onSuccess("Usage removed.", ["reports", "machinery-usage"]),
     onError,
   });
   const createFuel = useMutation({
@@ -3757,6 +3774,7 @@ function OperationsManager({
                     <tr>
                       <th className="px-4 py-2.5">Date</th>
                       <th className="px-4 py-2.5">Machine</th>
+                      <th className="px-4 py-2.5">Vehicle No.</th>
                       <th className="px-4 py-2.5">Project</th>
                       <th className="px-4 py-2.5">Quantity</th>
                       <th className="px-4 py-2.5">Cost</th>
@@ -3769,9 +3787,10 @@ function OperationsManager({
                       <DataTableRow key={item.id} zebra={i % 2 === 1}>
                         <DataTableCell>{item.logged_date}</DataTableCell>
                         <DataTableCell className="font-medium text-gray-900">{item.machinery_name}</DataTableCell>
+                        <DataTableCell className="text-sm font-medium text-gray-900">{item.vehicle_number || "—"}</DataTableCell>
                         <DataTableCell>{item.project_name || "—"}</DataTableCell>
                         <DataTableCell>{item.fuel_quantity} L</DataTableCell>
-                        <DataTableCell>{formatCurrency(item.fuel_cost)}</DataTableCell>
+                        <DataTableCell>{item.fuel_cost == null || item.fuel_cost === "" ? "—" : formatCurrency(item.fuel_cost)}</DataTableCell>
                         <DataTableCell className="text-xs text-gray-500">
                           {item.previous_meter_reading} → {item.current_meter_reading}
                         </DataTableCell>
@@ -3798,7 +3817,7 @@ function OperationsManager({
                     ))}
                     {!fuelLogList.length && (
                       <tr>
-                        <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-500">
+                        <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-500">
                           No fuel logs yet. Click &quot;Add Fuel Log&quot; to create one.
                         </td>
                       </tr>
@@ -3900,11 +3919,11 @@ function OperationsManager({
                       <th className="px-4 py-2.5">Name</th>
                       <th className="px-4 py-2.5">Vehicle</th>
                       <th className="px-4 py-2.5">Insurance</th>
-                      <th className="px-4 py-2.5">Permit</th>
                       <th className="px-4 py-2.5">Fitness</th>
                       <th className="px-4 py-2.5">PUC</th>
                       <th className="px-4 py-2.5">MV tax</th>
                       <th className="px-4 py-2.5">Green tax</th>
+                      <th className="px-4 py-2.5">Permit</th>
                       <th className="px-4 py-2.5">HSRP</th>
                       <th className="px-4 py-2.5">Driver</th>
                       <th className="px-4 py-2.5">Status</th>
@@ -3958,13 +3977,6 @@ function OperationsManager({
                         </DataTableCell>
                         <DataTableCell>
                           <OptionalExpiryCell
-                            date={item.permit_expiry_date}
-                            downloadHref={machineryDocHref(item, "PERMIT")}
-                            downloadLabel="permit"
-                          />
-                        </DataTableCell>
-                        <DataTableCell>
-                          <OptionalExpiryCell
                             date={item.fitness_validity_date}
                             downloadHref={machineryDocHref(item, "FITNESS")}
                             downloadLabel="fitness"
@@ -4001,6 +4013,13 @@ function OperationsManager({
                             date={item.green_tax_date}
                             downloadHref={machineryDocHref(item, "GREEN_TAX")}
                             downloadLabel="green tax"
+                          />
+                        </DataTableCell>
+                        <DataTableCell>
+                          <OptionalExpiryCell
+                            date={item.permit_expiry_date}
+                            downloadHref={machineryDocHref(item, "PERMIT")}
+                            downloadLabel="permit"
                           />
                         </DataTableCell>
                         <DataTableCell>
@@ -4067,7 +4086,14 @@ function OperationsManager({
                     </Link>
                     <p className="text-sm text-gray-500">{usageList.length} usage entries</p>
                   </div>
-                  <button type="button" className={btnPrimaryClass} onClick={() => setUsageModalOpen(true)}>
+                  <button
+                    type="button"
+                    className={btnPrimaryClass}
+                    onClick={() => {
+                      setEditingUsage(null);
+                      setUsageModalOpen(true);
+                    }}
+                  >
                     + Add Usage
                   </button>
                 </Toolbar>
@@ -4081,6 +4107,7 @@ function OperationsManager({
                       <th className="px-4 py-2.5">KM</th>
                       <th className="px-4 py-2.5">Hours</th>
                       <th className="px-4 py-2.5">Efficiency</th>
+                      <th className="px-4 py-2.5">Actions</th>
                     </tr>
                   </DataTableHead>
                   <DataTableBody>
@@ -4118,11 +4145,40 @@ function OperationsManager({
                             <span className="text-xs text-gray-400">—</span>
                           )}
                         </DataTableCell>
+                        <DataTableCell>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              aria-label={`Edit usage ${usage.id}`}
+                              title="Edit"
+                              className="inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-700 hover:bg-gray-50"
+                              onClick={() => {
+                                setEditingUsage(usage);
+                                setUsageModalOpen(true);
+                              }}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Delete usage ${usage.id}`}
+                              title="Delete"
+                              className="inline-flex items-center justify-center rounded-md border border-red-200 bg-red-50 p-1.5 text-red-700 hover:bg-red-100 disabled:opacity-60"
+                              disabled={deleteUsage.isPending}
+                              onClick={() => {
+                                if (!window.confirm("Delete this usage entry?")) return;
+                                deleteUsage.mutate(usage.id);
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </DataTableCell>
                       </DataTableRow>
                     ))}
                     {!usageList.length && (
                       <tr>
-                        <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-500">
+                        <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-500">
                           No usage logs yet. Click &quot;Add Usage&quot; to create one.
                         </td>
                       </tr>
@@ -4228,7 +4284,7 @@ function OperationsManager({
                   previous_meter_reading: formValue(form, "previous_meter_reading"),
                   current_meter_reading: formValue(form, "current_meter_reading"),
                   fuel_quantity: formValue(form, "fuel_quantity"),
-                  fuel_cost: formValue(form, "fuel_cost"),
+                  fuel_cost: formValue(form, "fuel_cost") || undefined,
                   logged_date: formValue(form, "logged_date"),
                   bill_photos: billPhotos.length ? billPhotos : undefined,
                 });
@@ -4263,8 +4319,8 @@ function OperationsManager({
                 />
               </FormRow>
               <FormRow label="Current meter"><input className={inputClass} name="current_meter_reading" type="number" required /></FormRow>
-              <FormRow label="Fuel quantity"><input className={inputClass} name="fuel_quantity" type="number" required /></FormRow>
-              <FormRow label="Fuel cost"><input className={inputClass} name="fuel_cost" type="number" required /></FormRow>
+              <FormRow label="Fuel quantity"><input className={inputClass} name="fuel_quantity" type="number" min="0" step="0.01" required /></FormRow>
+              <FormRow label="Fuel cost"><input className={inputClass} name="fuel_cost" type="number" min="0" step="0.01" /></FormRow>
               <FormRow label="Bill photos">
                 <input className={inputClass} name="bill_photos" type="file" accept="image/*" multiple />
               </FormRow>
@@ -4273,43 +4329,90 @@ function OperationsManager({
 
           <Modal
             open={usageModalOpen}
-            title="Add Usage"
+            title={editingUsage ? "Edit Usage" : "Add Usage"}
             subtitle="Log hours, km, and fuel. Over-consumption is flagged when efficiency is below the machine average."
-            onClose={() => setUsageModalOpen(false)}
+            onClose={() => {
+              setUsageModalOpen(false);
+              setEditingUsage(null);
+            }}
             footer={
               <>
-                <button type="button" className={btnSecondaryClass} onClick={() => setUsageModalOpen(false)}>
+                <button
+                  type="button"
+                  className={btnSecondaryClass}
+                  onClick={() => {
+                    setUsageModalOpen(false);
+                    setEditingUsage(null);
+                  }}
+                >
                   Cancel
                 </button>
-                <button type="submit" form="usage-form" className={btnPrimaryClass} disabled={createUsage.isPending}>
-                  {createUsage.isPending ? "Saving..." : "Save Usage"}
+                <button
+                  type="submit"
+                  form="usage-form"
+                  className={btnPrimaryClass}
+                  disabled={createUsage.isPending || updateUsage.isPending}
+                >
+                  {createUsage.isPending || updateUsage.isPending ? "Saving..." : editingUsage ? "Update Usage" : "Save Usage"}
                 </button>
               </>
             }
           >
             <form
+              key={editingUsage?.id ?? "new"}
               id="usage-form"
               onSubmit={(event) => {
                 event.preventDefault();
                 const form = new FormData(event.currentTarget);
-                createUsage.mutate({
-                  project: form.get("project") ? Number(form.get("project")) : undefined,
+                const payload = {
+                  project: form.get("project") ? Number(form.get("project")) : editingUsage ? null : undefined,
                   machinery: Number(form.get("machinery")),
                   operator: formValue(form, "operator"),
-                  hours_used: formValue(form, "hours_used") || undefined,
-                  km_used: formValue(form, "km_used") || undefined,
-                  fuel_consumption: formValue(form, "fuel_consumption") || undefined,
-                  usage_date: formValue(form, "usage_date") || undefined,
+                  hours_used: formValue(form, "hours_used") || (editingUsage ? null : undefined),
+                  km_used: formValue(form, "km_used") || (editingUsage ? null : undefined),
+                  fuel_consumption: formValue(form, "fuel_consumption") || (editingUsage ? null : undefined),
+                  usage_date: formValue(form, "usage_date") || (editingUsage ? null : undefined),
+                };
+                if (editingUsage) {
+                  updateUsage.mutate({ id: editingUsage.id, payload });
+                  return;
+                }
+                createUsage.mutate({
+                  project: payload.project ?? undefined,
+                  machinery: payload.machinery,
+                  operator: payload.operator,
+                  hours_used: payload.hours_used ?? undefined,
+                  km_used: payload.km_used ?? undefined,
+                  fuel_consumption: payload.fuel_consumption ?? undefined,
+                  usage_date: payload.usage_date ?? undefined,
                 });
               }}
             >
-              <FormRow label="Project">{fuelProjectSelect}</FormRow>
-              <FormRow label="Machine">{machinerySelect}</FormRow>
-              <FormRow label="Operator"><input className={inputClass} name="operator" /></FormRow>
-              <FormRow label="Hours used"><input className={inputClass} name="hours_used" type="number" min="0" step="0.1" /></FormRow>
-              <FormRow label="KM used"><input className={inputClass} name="km_used" type="number" min="0" step="0.1" /></FormRow>
-              <FormRow label="Fuel (liters)"><input className={inputClass} name="fuel_consumption" type="number" min="0" step="0.1" /></FormRow>
-              <FormRow label="Date"><input className={inputClass} name="usage_date" type="date" /></FormRow>
+              <FormRow label="Project">
+                <select className={inputClass} name="project" defaultValue={editingUsage?.project ?? ""}>
+                  <option value="">No project (optional)</option>
+                  {projectList.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.code} - {project.name}
+                    </option>
+                  ))}
+                </select>
+              </FormRow>
+              <FormRow label="Machine">
+                <select className={inputClass} name="machinery" required defaultValue={editingUsage?.machinery ?? ""}>
+                  <option value="">Select machine</option>
+                  {machineryList.filter((item) => item.active || item.id === editingUsage?.machinery).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}{item.vehicle_number ? ` - ${item.vehicle_number}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </FormRow>
+              <FormRow label="Operator"><input className={inputClass} name="operator" defaultValue={editingUsage?.operator || ""} /></FormRow>
+              <FormRow label="Hours used"><input className={inputClass} name="hours_used" type="number" min="0" step="0.1" defaultValue={editingUsage?.hours_used ?? ""} /></FormRow>
+              <FormRow label="KM used"><input className={inputClass} name="km_used" type="number" min="0" step="0.1" defaultValue={editingUsage?.km_used ?? ""} /></FormRow>
+              <FormRow label="Fuel (liters)"><input className={inputClass} name="fuel_consumption" type="number" min="0" step="0.1" defaultValue={editingUsage?.fuel_consumption ?? ""} /></FormRow>
+              <FormRow label="Date"><input className={inputClass} name="usage_date" type="date" defaultValue={editingUsage?.usage_date ?? ""} /></FormRow>
             </form>
           </Modal>
 

@@ -801,7 +801,7 @@ export function MachineryFuelLogsPage({ machineryId }: { machineryId: number }) 
                 <DataTableCell>{item.previous_meter_reading}</DataTableCell>
                 <DataTableCell>{item.current_meter_reading}</DataTableCell>
                 <DataTableCell>{item.fuel_quantity} L</DataTableCell>
-                <DataTableCell>{formatCurrency(item.fuel_cost)}</DataTableCell>
+                <DataTableCell>{item.fuel_cost == null || item.fuel_cost === "" ? "—" : formatCurrency(item.fuel_cost)}</DataTableCell>
                 <DataTableCell>
                   {item.images?.length ? (
                     <div className="flex gap-1">
@@ -1143,7 +1143,7 @@ export function MachineryUsageDetailHistoryPage() {
                       </DataTableCell>
                       <DataTableCell>{formatQty(row.fuel_quantity)} L</DataTableCell>
                       <DataTableCell>{avg != null ? formatQty(avg) : "—"}</DataTableCell>
-                      <DataTableCell>{formatCurrency(row.fuel_cost)}</DataTableCell>
+                      <DataTableCell>{row.fuel_cost == null || row.fuel_cost === "" ? "—" : formatCurrency(row.fuel_cost)}</DataTableCell>
                     </DataTableRow>
                   );
                 })}
@@ -1220,6 +1220,7 @@ export function MachineryFuelLogsHistoryPage() {
             <DataTableHead>
               <tr>
                 <th className="px-4 py-2.5">Machine</th>
+                <th className="px-4 py-2.5">Vehicle No.</th>
                 <th className="px-4 py-2.5">Date</th>
                 <th className="px-4 py-2.5">Project</th>
                 <th className="px-4 py-2.5">Previous meter</th>
@@ -1233,12 +1234,13 @@ export function MachineryFuelLogsHistoryPage() {
               {page.pageRows.map((item: FuelLog, i) => (
                 <DataTableRow key={item.id} zebra={i % 2 === 1}>
                   <DataTableCell className="font-medium text-gray-900">{item.machinery_name || selected?.name || "—"}</DataTableCell>
+                  <DataTableCell className="text-sm font-medium text-gray-900">{item.vehicle_number || selected?.vehicle_number || "—"}</DataTableCell>
                   <DataTableCell>{formatDate(item.logged_date)}</DataTableCell>
                   <DataTableCell>{item.project_name || "—"}</DataTableCell>
                   <DataTableCell>{item.previous_meter_reading}</DataTableCell>
                   <DataTableCell>{item.current_meter_reading}</DataTableCell>
                   <DataTableCell>{item.fuel_quantity} L</DataTableCell>
-                  <DataTableCell>{formatCurrency(item.fuel_cost)}</DataTableCell>
+                  <DataTableCell>{item.fuel_cost == null || item.fuel_cost === "" ? "—" : formatCurrency(item.fuel_cost)}</DataTableCell>
                   <DataTableCell>
                     <PhotoThumbs images={item.images} />
                   </DataTableCell>

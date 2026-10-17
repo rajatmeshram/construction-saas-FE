@@ -474,10 +474,11 @@ export type FuelLog = {
   project_name: string | null;
   machinery: number;
   machinery_name: string;
+  vehicle_number?: string;
   previous_meter_reading: string;
   current_meter_reading: string;
   fuel_quantity: string;
-  fuel_cost: string;
+  fuel_cost: string | null;
   logged_date: string;
   images: FuelLogImage[];
   bill_photo_url: string | null;

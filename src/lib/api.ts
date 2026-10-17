@@ -796,13 +796,30 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  updateMachineryUsage: (
+    id: number,
+    payload: {
+      project?: number | null;
+      machinery: number;
+      operator?: string;
+      hours_used?: string | null;
+      km_used?: string | null;
+      fuel_consumption?: string | null;
+      usage_date?: string | null;
+    },
+  ) =>
+    request(`/operations/machinery-usage/${id}/`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deleteMachineryUsage: (id: number) => request<void>(`/operations/machinery-usage/${id}/`, { method: "DELETE" }),
   createFuelLog: (payload: {
     project?: number;
     machinery: number;
     previous_meter_reading: string;
     current_meter_reading: string;
     fuel_quantity: string;
-    fuel_cost: string;
+    fuel_cost?: string;
     logged_date: string;
     bill_photos?: File[];
   }) => {
@@ -812,7 +829,7 @@ export const api = {
     formData.append("previous_meter_reading", payload.previous_meter_reading);
     formData.append("current_meter_reading", payload.current_meter_reading);
     formData.append("fuel_quantity", payload.fuel_quantity);
-    formData.append("fuel_cost", payload.fuel_cost);
+    if (payload.fuel_cost) formData.append("fuel_cost", payload.fuel_cost);
     formData.append("logged_date", payload.logged_date);
     payload.bill_photos?.forEach((file) => formData.append("bill_photos", file));
     return request<FuelLog>("/operations/fuel-logs/", { method: "POST", body: formData });
