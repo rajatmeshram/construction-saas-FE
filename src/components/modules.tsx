@@ -3228,6 +3228,7 @@ function OperationsManager({
   const [previousMeter, setPreviousMeter] = useState("");
   const [machineryComplianceFilter, setMachineryComplianceFilter] = useState<MachineryComplianceKey>("all");
   const [machineryExpiryFilter, setMachineryExpiryFilter] = useState<MachineryExpiryKey>("all");
+  const [machineryTypeFilter, setMachineryTypeFilter] = useState("all");
   const [machineryVehicleQuery, setMachineryVehicleQuery] = useState("");
   const [selectedMachinery, setSelectedMachinery] = useState<number[]>([]);
   const projects = useQuery<Paginated<Project>>({ queryKey: ["projects"], queryFn: api.projects });
@@ -3430,12 +3431,25 @@ function OperationsManager({
   const expenseList = expenses.data?.results ?? [];
   const machineryList = machinery.data?.results ?? [];
   const driverList = drivers.data?.results ?? [];
+  const machineryTypeOptions = Array.from(
+    new Set(
+      machineryList
+        .map((item) => (item.machine_type || "").trim())
+        .filter(Boolean),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
   const filteredMachineryList = machineryList.filter((item) => {
+    if (machineryTypeFilter !== "all") {
+      const type = (item.machine_type || "").trim();
+      if (type.toLowerCase() !== machineryTypeFilter.toLowerCase()) return false;
+    }
     const searchQuery = machineryVehicleQuery.trim().toLowerCase();
     if (searchQuery) {
       const vehicleMatch = (item.vehicle_number || "").toLowerCase().includes(searchQuery);
       const ownerMatch = (item.owner_name || "").toLowerCase().includes(searchQuery);
-      if (!vehicleMatch && !ownerMatch) return false;
+      const typeMatch = (item.machine_type || "").toLowerCase().includes(searchQuery);
+      const nameMatch = (item.name || "").toLowerCase().includes(searchQuery);
+      if (!vehicleMatch && !ownerMatch && !typeMatch && !nameMatch) return false;
     }
     return matchesMachineryCompliance(item, machineryComplianceFilter, machineryExpiryFilter);
   });
@@ -3443,7 +3457,7 @@ function OperationsManager({
   const usageList = machineryUsageList.data?.results ?? [];
   const fuelPage = useTablePage(fuelLogList, { resetKey: machinerySection });
   const machineryPage = useTablePage(filteredMachineryList, {
-    resetKey: `${machineryComplianceFilter}-${machineryExpiryFilter}-${machineryVehicleQuery}`,
+    resetKey: `${machineryComplianceFilter}-${machineryExpiryFilter}-${machineryTypeFilter}-${machineryVehicleQuery}`,
   });
   const usagePage = useTablePage(usageList, { resetKey: "usage" });
   const machineryPageIds = machineryPage.pageRows.map((item) => item.id);
@@ -3871,16 +3885,34 @@ function OperationsManager({
                       </select>
                     </label>
                     <label className="block">
+                      <span className="text-xs font-medium text-gray-600">Machine type</span>
+                      <select
+                        className={`${inputClass} mt-1 min-w-[10rem]`}
+                        value={machineryTypeFilter}
+                        onChange={(event) => setMachineryTypeFilter(event.target.value)}
+                      >
+                        <option value="all">All types</option>
+                        {machineryTypeOptions.map((type) => (
+                          <option key={type} value={type}>
+                            {type}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
                       <span className="text-xs font-medium text-gray-600">Search</span>
                       <input
-                        className={`${inputClass} mt-1 min-w-[10rem]`}
+                        className={`${inputClass} mt-1 min-w-[12rem]`}
                         value={machineryVehicleQuery}
                         onChange={(event) => setMachineryVehicleQuery(event.target.value)}
-                        placeholder="Vehicle no. or owner"
+                        placeholder="Type, vehicle, name, or owner"
                       />
                     </label>
                     <p className="pb-2 text-sm text-gray-500">
-                      {machineryExpiryFilter === "all" && machineryComplianceFilter === "all" && !machineryVehicleQuery.trim()
+                      {machineryExpiryFilter === "all" &&
+                      machineryComplianceFilter === "all" &&
+                      machineryTypeFilter === "all" &&
+                      !machineryVehicleQuery.trim()
                         ? `${machineryList.length} machine${machineryList.length === 1 ? "" : "s"}`
                         : `${filteredMachineryList.length} of ${machineryList.length} machines`}
                     </p>
@@ -4626,7 +4658,7 @@ function OverviewPage() {
         </ContentCard>
         <ContentCard
           title="Machinery expiring soon"
-          subtitle="Insurance, permit, fitness, PUC & green tax in next 5 days"
+          subtitle="Insurance, permit, fitness, PUC, MV tax & green tax within 2 months"
         >
           <ul className="divide-y divide-gray-100">
             {(data?.upcoming_machinery_expiries ?? []).map((item) => (
@@ -4639,13 +4671,13 @@ function OverviewPage() {
                     {item.document} · {item.vehicle_number || "—"} · {formatShortDate(item.expiry_date)}
                   </p>
                 </div>
-                <Badge tone={item.days_left <= 2 ? "red" : "amber"}>
+                <Badge tone={item.days_left <= 14 ? "red" : "amber"}>
                   {item.days_left === 0 ? "Today" : item.days_left === 1 ? "1 day" : `${item.days_left} days`}
                 </Badge>
               </li>
             ))}
             {!(data?.upcoming_machinery_expiries ?? []).length && (
-              <li className="py-6 text-center text-sm text-gray-500">No machinery documents expiring in the next 5 days.</li>
+              <li className="py-6 text-center text-sm text-gray-500">No machinery documents expiring within 2 months.</li>
             )}
           </ul>
           <div className="mt-3 border-t border-gray-100 pt-3">

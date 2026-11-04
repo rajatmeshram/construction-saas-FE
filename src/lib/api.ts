@@ -612,6 +612,7 @@ export const api = {
     labour?: number;
     project?: number;
     all_sites?: boolean;
+    designation?: string;
   }) =>
     request<PayrollWeekDetail & {
       created_salaries: number;

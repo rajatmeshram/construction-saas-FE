@@ -107,6 +107,20 @@ function roleLabel(item: AuthUser) {
   return "Employee";
 }
 
+const PAYROLL_DESIGNATION_OPTIONS = [
+  { value: "LABOUR", label: "Labour" },
+  { value: "DRIVER", label: "Driver" },
+  { value: "OFFICE_STAFF", label: "Office Staff" },
+  { value: "SUPERVISOR", label: "Supervisor" },
+] as const;
+
+function designationDisplayLabel(code?: string | null) {
+  if (!code) return "—";
+  const builtin = PAYROLL_DESIGNATION_OPTIONS.find((item) => item.value === code);
+  if (builtin) return builtin.label;
+  return code;
+}
+
 export function UpdateWagesPage() {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
@@ -514,6 +528,7 @@ export function PayrollManager() {
   const [rangeScope, setRangeScope] = useState<"all" | "individual" | "site">("all");
   const [rangeLabourId, setRangeLabourId] = useState("");
   const [rangeProjectId, setRangeProjectId] = useState("");
+  const [rangeDesignation, setRangeDesignation] = useState("all");
 
   const weeks = useQuery<Paginated<PayrollWeekListItem>>({
     queryKey: ["payroll-weeks"],
@@ -529,6 +544,25 @@ export function PayrollManager() {
     enabled: isSuperAdmin,
   });
   const projectList = projects.data?.results ?? [];
+  const labourWorkers = useQuery({
+    queryKey: ["labour-workers", "payroll-designations"],
+    queryFn: () => api.labourWorkers({ page_size: 200, ordering: "user__first_name" }),
+    enabled: isSuperAdmin,
+  });
+  const designationOptions = useMemo(() => {
+    const builtinValues = new Set<string>(PAYROLL_DESIGNATION_OPTIONS.map((item) => item.value));
+    const custom = Array.from(
+      new Set(
+        (labourWorkers.data?.results ?? [])
+          .map((worker) => (worker.designation || "").trim())
+          .filter((code) => Boolean(code) && !builtinValues.has(code)),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+    return [
+      ...PAYROLL_DESIGNATION_OPTIONS.map((item) => ({ value: item.value, label: item.label })),
+      ...custom.map((code) => ({ value: code, label: designationDisplayLabel(code) })),
+    ];
+  }, [labourWorkers.data?.results]);
 
   const generate = useMutation({
     mutationFn: () => api.generateWeeklyPayroll({ week_end: weekEnd }),
@@ -573,6 +607,7 @@ export function PayrollManager() {
         labour,
         project,
         all_sites: allSites || undefined,
+        designation: rangeScope !== "individual" && rangeDesignation !== "all" ? rangeDesignation : undefined,
       });
     },
     onSuccess: (result) => {
@@ -635,9 +670,9 @@ export function PayrollManager() {
         <div className="rounded-lg border border-gray-200/80 bg-white p-4 shadow-sm">
           <h2 className="text-base font-semibold text-coal">Generate salary by date range</h2>
           <p className="mt-1 text-sm text-gray-500">
-            Creates salary sheets for a custom period — everyone, one person, one site, or all sites. Individual creates
-            only that person’s sheet; site scope creates site sheet(s). You can generate again for the same dates anytime
-            — each run adds a new sheet.
+            Creates salary sheets for a custom period — everyone, one designation (drivers, labours, etc.), one person,
+            one site, or all sites. Individual creates only that person’s sheet; site scope creates site sheet(s). You
+            can generate again for the same dates anytime — each run adds a new sheet.
           </p>
           {rangeMessage && (
             <p className="mt-4 rounded-lg bg-violet-50 px-4 py-3 text-sm font-medium text-violet-900">{rangeMessage}</p>
@@ -686,6 +721,22 @@ export function PayrollManager() {
                 <option value="site">Site / project</option>
               </select>
             </Field>
+            {rangeScope !== "individual" && (
+              <Field label="Designation">
+                <select
+                  className={inputClass}
+                  value={rangeDesignation}
+                  onChange={(event) => setRangeDesignation(event.target.value)}
+                >
+                  <option value="all">All designations</option>
+                  {designationOptions.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
             {rangeScope === "individual" && (
               <Field label="Person">
                 <select
