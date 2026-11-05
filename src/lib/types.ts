@@ -457,6 +457,8 @@ export type MachineryUsage = {
   avg_hours_per_liter?: string | null;
   expected_km?: number | null;
   expected_hours?: number | null;
+  expected_fuel?: number | null;
+  fuel_difference?: number | null;
   km_over_consumption?: boolean;
   hours_over_consumption?: boolean;
   over_consumption?: boolean;
@@ -477,11 +479,16 @@ export type FuelLog = {
   vehicle_number?: string;
   previous_meter_reading: string;
   current_meter_reading: string;
+  hours_used?: string | null;
   fuel_quantity: string;
   fuel_cost: string | null;
   logged_date: string;
   images: FuelLogImage[];
   bill_photo_url: string | null;
+  target_average?: string | null;
+  actual_avg_lph?: number | null;
+  expected_fuel?: number | null;
+  fuel_difference?: number | null;
   created_at: string;
 };
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Banknote, Download, FileText, Fuel, Gauge, Pencil, Shield, Timer, Trash2, Wrench } from "lucide-react";
+import { ArrowLeft, Download, FileText, Fuel, Gauge, Pencil, Shield, Timer, Trash2, Wrench } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
@@ -22,8 +22,9 @@ import {
   inputClass,
 } from "@/components/ui";
 import { api } from "@/lib/api";
+import { fuelUsageStats, fuelUsageSummary } from "@/lib/fuel-usage";
 import { useTablePage } from "@/lib/pagination";
-import type { FuelLog, LabourProfile, Machinery, MachineryDocument, MachineryMaintenance, MachineryUsage } from "@/lib/types";
+import type { FuelLog, LabourProfile, Machinery, MachineryDocument, MachineryMaintenance } from "@/lib/types";
 
 function formatQty(value?: string | number | null, digits = 2) {
   const amount = Number(value ?? 0);
@@ -34,21 +35,6 @@ function formatQty(value?: string | number | null, digits = 2) {
 function formatCurrency(value?: string | number | null) {
   const amount = Number(value ?? 0);
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
-}
-
-function meterAverageUnit(machine?: Machinery | null) {
-  const hasKm = Boolean(machine?.avg_km_per_liter);
-  const hasHrs = Boolean(machine?.avg_hours_per_liter);
-  if (hasKm && !hasHrs) return "km/L";
-  if (hasHrs && !hasKm) return "hrs/L";
-  return "per L";
-}
-
-function fuelFillAverage(row: FuelLog) {
-  const qty = Number(row.fuel_quantity || 0);
-  const delta = Number(row.current_meter_reading || 0) - Number(row.previous_meter_reading || 0);
-  if (qty <= 0 || delta <= 0) return null;
-  return delta / qty;
 }
 
 function formatDate(value?: string | null) {
@@ -229,14 +215,14 @@ function MachineryEditFields({ item, drivers }: { item: Machinery; drivers: Labo
         <input className={inputClass} name="engine_number" defaultValue={item.engine_number || ""} />
       </FormRow>
       <div className="mt-4 border-t border-gray-100 pt-4">
-        <p className="text-sm font-semibold text-coal">Average fuel consumption</p>
-        <p className="mt-1 text-xs text-gray-500">Used to detect over-consumption on usage logs (1 liter baseline).</p>
+        <p className="text-sm font-semibold text-coal">Target fuel average</p>
+        <p className="mt-1 text-xs text-gray-500">Expected diesel = hours used × target average (litres per hour).</p>
       </div>
       <FormRow label="Avg km / liter">
-        <input className={inputClass} name="avg_km_per_liter" type="number" min="0" step="0.1" defaultValue={item.avg_km_per_liter ?? ""} />
+        <input className={inputClass} name="avg_km_per_liter" type="number" min="0" step="0.01" defaultValue={item.avg_km_per_liter ?? ""} />
       </FormRow>
-      <FormRow label="Avg hrs / liter">
-        <input className={inputClass} name="avg_hours_per_liter" type="number" min="0" step="0.1" defaultValue={item.avg_hours_per_liter ?? ""} />
+      <FormRow label="Target average (L/hr)">
+        <input className={inputClass} name="avg_hours_per_liter" type="number" min="0" step="0.01" defaultValue={item.avg_hours_per_liter ?? ""} placeholder="e.g. 4.75" />
       </FormRow>
       <div className="mt-4 border-t border-gray-100 pt-4">
         <p className="text-sm font-semibold text-coal">Insurance</p>
@@ -566,7 +552,7 @@ export function MachineryDetailPage({ machineryId }: { machineryId: number }) {
             <div className="flex justify-between gap-4"><dt className="text-gray-500">Vehicle class</dt><dd className="font-medium">{item.vehicle_class || "—"}</dd></div>
             <div className="flex justify-between gap-4"><dt className="text-gray-500">HSRP done</dt><dd className="font-medium">{item.hsrp_done ? "Yes" : "No"}</dd></div>
             <div className="flex justify-between gap-4"><dt className="text-gray-500">Avg km / liter</dt><dd className="font-medium">{item.avg_km_per_liter ? `${item.avg_km_per_liter} km/L` : "—"}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-gray-500">Avg hrs / liter</dt><dd className="font-medium">{item.avg_hours_per_liter ? `${item.avg_hours_per_liter} hrs/L` : "—"}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-gray-500">Target average</dt><dd className="font-medium">{item.avg_hours_per_liter ? `${item.avg_hours_per_liter} L/hr` : "—"}</dd></div>
           </dl>
         </div>
 
@@ -786,9 +772,10 @@ export function MachineryFuelLogsPage({ machineryId }: { machineryId: number }) 
             <tr>
               <th className="px-4 py-2.5">Date</th>
               <th className="px-4 py-2.5">Project</th>
-              <th className="px-4 py-2.5">Previous meter</th>
-              <th className="px-4 py-2.5">Current meter</th>
-              <th className="px-4 py-2.5">Quantity</th>
+              <th className="px-4 py-2.5">Start reading</th>
+              <th className="px-4 py-2.5">End reading</th>
+              <th className="px-4 py-2.5">Hrs used</th>
+              <th className="px-4 py-2.5">Diesel (L)</th>
               <th className="px-4 py-2.5">Cost</th>
               <th className="px-4 py-2.5">Photos</th>
             </tr>
@@ -800,6 +787,7 @@ export function MachineryFuelLogsPage({ machineryId }: { machineryId: number }) 
                 <DataTableCell>{item.project_name || "—"}</DataTableCell>
                 <DataTableCell>{item.previous_meter_reading}</DataTableCell>
                 <DataTableCell>{item.current_meter_reading}</DataTableCell>
+                <DataTableCell>{formatQty(item.hours_used ?? fuelUsageStats({ start: item.previous_meter_reading, end: item.current_meter_reading }).hours)}</DataTableCell>
                 <DataTableCell>{item.fuel_quantity} L</DataTableCell>
                 <DataTableCell>{item.fuel_cost == null || item.fuel_cost === "" ? "—" : formatCurrency(item.fuel_cost)}</DataTableCell>
                 <DataTableCell>
@@ -950,6 +938,128 @@ export function MachineryMaintenancePage({ machineryId }: { machineryId: number 
   );
 }
 
+function UsageLedger({
+  rows,
+  target,
+  loading,
+}: {
+  rows: FuelLog[];
+  target?: string | null;
+  loading?: boolean;
+}) {
+  const ordered = [...rows].sort((a, b) => String(a.logged_date).localeCompare(String(b.logged_date)));
+  const page = useTablePage(ordered, { resetKey: `${rows.length}-${target ?? ""}` });
+  const summary = fuelUsageSummary(
+    ordered.map((row) => ({
+      logged_date: row.logged_date,
+      fuel: row.fuel_quantity,
+      start: row.previous_meter_reading,
+      end: row.current_meter_reading,
+      hoursUsed: row.hours_used,
+    })),
+    target,
+  );
+
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard icon={Fuel} label="Total diesel" value={`${formatQty(summary.totalDiesel)} L`} />
+        <StatCard icon={Timer} label="Total running hours" value={formatQty(summary.totalHours)} />
+        <StatCard
+          icon={Gauge}
+          label="Actual average"
+          value={summary.actualAvg != null ? `${formatQty(summary.actualAvg)} L/hr` : "—"}
+        />
+        <StatCard
+          icon={Gauge}
+          label="Expected diesel"
+          value={summary.expectedFuel != null ? `${formatQty(summary.expectedFuel)} L` : "—"}
+        />
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm shadow-sm">
+        <p className="font-medium text-gray-900">
+          Readings {summary.opening != null ? formatQty(summary.opening) : "—"} → {summary.closing != null ? formatQty(summary.closing) : "—"}
+          {summary.target != null ? ` · target ${formatQty(summary.target)} L/hr` : ""}
+        </p>
+        <p className="mt-1 text-gray-600">
+          Actual average = total diesel / total running hours
+          {summary.actualAvg != null ? ` (${formatQty(summary.totalDiesel)} / ${formatQty(summary.totalHours)} = ${formatQty(summary.actualAvg)} L/hr)` : ""}.
+          {summary.expectedFuel != null
+            ? ` Expected diesel = target × hours (${formatQty(summary.target)} × ${formatQty(summary.totalHours)} = ${formatQty(summary.expectedFuel)} L).`
+            : " Set the machine target average (L/hr) to calculate expected diesel."}
+        </p>
+        {summary.withinTarget != null && (
+          <p className={`mt-2 font-medium ${summary.withinTarget ? "text-green-700" : "text-red-700"}`}>
+            {summary.withinTarget
+              ? "Filled diesel is below the expected consumption, so this is OK."
+              : `Filled diesel is above the expected consumption by ${formatQty(summary.difference)} L.`}
+          </p>
+        )}
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        <DataTable>
+          <DataTableHead>
+            <tr>
+              <th className="px-4 py-2.5">Date</th>
+              <th className="px-4 py-2.5">Site</th>
+              <th className="px-4 py-2.5">Diesel (L)</th>
+              <th className="px-4 py-2.5">Start reading</th>
+              <th className="px-4 py-2.5">End reading</th>
+              <th className="px-4 py-2.5">Hrs used</th>
+              <th className="px-4 py-2.5">Actual avg (L/hr)</th>
+              <th className="px-4 py-2.5">Target</th>
+              <th className="px-4 py-2.5">Expected fuel</th>
+              <th className="px-4 py-2.5">Difference</th>
+            </tr>
+          </DataTableHead>
+          <DataTableBody>
+            {page.pageRows.map((row, i) => {
+              const stats = fuelUsageStats({
+                fuel: row.fuel_quantity,
+                start: row.previous_meter_reading,
+                end: row.current_meter_reading,
+                hoursUsed: row.hours_used,
+                targetLph: target,
+              });
+              const loss = stats.difference != null && stats.difference > 0;
+              return (
+                <DataTableRow key={row.id} zebra={i % 2 === 1}>
+                  <DataTableCell>{formatDate(row.logged_date)}</DataTableCell>
+                  <DataTableCell>{row.project_name || "—"}</DataTableCell>
+                  <DataTableCell>{formatQty(stats.diesel)}</DataTableCell>
+                  <DataTableCell>{row.previous_meter_reading}</DataTableCell>
+                  <DataTableCell>{row.current_meter_reading}</DataTableCell>
+                  <DataTableCell>{formatQty(stats.hours)}</DataTableCell>
+                  <DataTableCell>{formatQty(stats.actualAvg)}</DataTableCell>
+                  <DataTableCell>{target != null && target !== "" ? formatQty(target) : "—"}</DataTableCell>
+                  <DataTableCell>{stats.expectedFuel != null ? formatQty(stats.expectedFuel) : "—"}</DataTableCell>
+                  <DataTableCell className={loss ? "font-semibold text-red-700" : "text-green-700"}>
+                    {stats.difference != null ? formatQty(stats.difference) : "—"}
+                  </DataTableCell>
+                </DataTableRow>
+              );
+            })}
+          </DataTableBody>
+        </DataTable>
+        <TablePagination
+          page={page.page}
+          totalPages={page.totalPages}
+          total={page.total}
+          pageSize={page.pageSize}
+          from={page.from}
+          to={page.to}
+          onPageChange={page.setPage}
+        />
+        {!loading && !rows.length && (
+          <p className="px-4 py-8 text-center text-sm text-gray-500">No fuel logs yet. Usage rows are created from fuel logs.</p>
+        )}
+      </div>
+    </>
+  );
+}
+
 export function MachineryUsagePage({ machineryId }: { machineryId: number }) {
   const [message, setMessage] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -958,13 +1068,12 @@ export function MachineryUsagePage({ machineryId }: { machineryId: number }) {
     queryKey: ["machinery", machineryId],
     queryFn: () => api.machineryItem(machineryId),
   });
-  const usage = useQuery({
-    queryKey: ["machinery-usage", machineryId],
-    queryFn: () => api.machineryUsage({ machinery: machineryId }),
+  const fuelLogs = useQuery({
+    queryKey: ["fuel-logs", machineryId],
+    queryFn: () => api.fuelLogs({ machinery: machineryId }),
   });
 
-  const rows = usage.data?.results ?? [];
-  const page = useTablePage(rows, { resetKey: machineryId });
+  const rows = fuelLogs.data?.results ?? [];
 
   async function download() {
     setExporting(true);
@@ -1000,44 +1109,7 @@ export function MachineryUsagePage({ machineryId }: { machineryId: number }) {
 
       {message && <p className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900">{message}</p>}
 
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-        <DataTable>
-          <DataTableHead>
-            <tr>
-              <th className="px-4 py-2.5">Date</th>
-              <th className="px-4 py-2.5">Project</th>
-              <th className="px-4 py-2.5">Operator</th>
-              <th className="px-4 py-2.5">Hours</th>
-              <th className="px-4 py-2.5">KM</th>
-              <th className="px-4 py-2.5">Fuel (L)</th>
-            </tr>
-          </DataTableHead>
-          <DataTableBody>
-            {page.pageRows.map((item: MachineryUsage, i) => (
-              <DataTableRow key={item.id} zebra={i % 2 === 1}>
-                <DataTableCell>{formatDate(item.usage_date)}</DataTableCell>
-                <DataTableCell>{item.project_name || "—"}</DataTableCell>
-                <DataTableCell>{item.operator || "—"}</DataTableCell>
-                <DataTableCell>{item.hours_used ?? "—"}</DataTableCell>
-                <DataTableCell>{item.km_used ?? "—"}</DataTableCell>
-                <DataTableCell>{item.fuel_consumption ?? "—"}</DataTableCell>
-              </DataTableRow>
-            ))}
-          </DataTableBody>
-        </DataTable>
-        <TablePagination
-          page={page.page}
-          totalPages={page.totalPages}
-          total={page.total}
-          pageSize={page.pageSize}
-          from={page.from}
-          to={page.to}
-          onPageChange={page.setPage}
-        />
-        {!usage.isLoading && !rows.length && (
-          <p className="px-4 py-8 text-center text-sm text-gray-500">No usage records for this machine.</p>
-        )}
-      </div>
+      <UsageLedger rows={rows} target={machinery.data?.avg_hours_per_liter} loading={fuelLogs.isLoading} />
     </section>
   );
 }
@@ -1061,26 +1133,6 @@ export function MachineryUsageDetailHistoryPage() {
   });
 
   const rows = fuelLogs.data?.results ?? [];
-  const page = useTablePage(rows, { resetKey: selectedId });
-  const unit = meterAverageUnit(selected);
-
-  const summary = useMemo(() => {
-    let totalLiters = 0;
-    let totalCost = 0;
-    let totalDelta = 0;
-    for (const row of rows) {
-      const qty = Number(row.fuel_quantity || 0);
-      totalLiters += qty;
-      totalCost += Number(row.fuel_cost || 0);
-      const delta = Number(row.current_meter_reading || 0) - Number(row.previous_meter_reading || 0);
-      if (qty > 0 && delta > 0) totalDelta += delta;
-    }
-    return {
-      totalLiters,
-      totalCost,
-      average: totalLiters > 0 && totalDelta > 0 ? totalDelta / totalLiters : null,
-    };
-  }, [rows]);
 
   function onMachineChange(value: string) {
     router.replace(value ? `/machinery/usage/history?machine=${value}` : "/machinery/usage/history");
@@ -1090,7 +1142,7 @@ export function MachineryUsageDetailHistoryPage() {
     <section className="space-y-4">
       <MachineHistoryHeader
         title="Usage detail history"
-        subtitle="Fuel fill history, totals, and machine average"
+        subtitle="Fuel logs and generated usage, with diesel average and expected consumption"
         backHref="/machinery/usage"
         backLabel="Back to usage"
         selectedId={selectedId}
@@ -1100,69 +1152,12 @@ export function MachineryUsageDetailHistoryPage() {
 
       {!selectedId && (
         <p className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-500 shadow-sm">
-          Select a machine to view fuel fill history.
+          Select a machine to view fuel and usage history.
         </p>
       )}
 
       {selectedId > 0 && (
-        <>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <StatCard icon={Fuel} label="Total diesel/petrol filled" value={`${formatQty(summary.totalLiters)} L`} />
-            <StatCard icon={Banknote} label="Total fuel cost" value={formatCurrency(summary.totalCost)} />
-            <StatCard
-              icon={Gauge}
-              label={`Machine average (${unit})`}
-              value={summary.average != null ? formatQty(summary.average) : "—"}
-            />
-          </div>
-
-          <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-            <DataTable>
-              <DataTableHead>
-                <tr>
-                  <th className="px-4 py-2.5">Machine</th>
-                  <th className="px-4 py-2.5">Date of fuel filling</th>
-                  <th className="px-4 py-2.5">Meter reading at filling</th>
-                  <th className="px-4 py-2.5">Diesel quantity (L)</th>
-                  <th className="px-4 py-2.5">Average ({unit})</th>
-                  <th className="px-4 py-2.5">Fuel cost</th>
-                </tr>
-              </DataTableHead>
-              <DataTableBody>
-                {page.pageRows.map((row: FuelLog, i) => {
-                  const avg = fuelFillAverage(row);
-                  return (
-                    <DataTableRow key={row.id} zebra={i % 2 === 1}>
-                      <DataTableCell className="font-medium text-gray-900">
-                        {row.machinery_name || selected?.name || "—"}
-                      </DataTableCell>
-                      <DataTableCell>{formatDate(row.logged_date)}</DataTableCell>
-                      <DataTableCell>
-                        <p>{row.current_meter_reading}</p>
-                        <p className="text-xs text-gray-500">prev {row.previous_meter_reading}</p>
-                      </DataTableCell>
-                      <DataTableCell>{formatQty(row.fuel_quantity)} L</DataTableCell>
-                      <DataTableCell>{avg != null ? formatQty(avg) : "—"}</DataTableCell>
-                      <DataTableCell>{row.fuel_cost == null || row.fuel_cost === "" ? "—" : formatCurrency(row.fuel_cost)}</DataTableCell>
-                    </DataTableRow>
-                  );
-                })}
-              </DataTableBody>
-            </DataTable>
-            <TablePagination
-              page={page.page}
-              totalPages={page.totalPages}
-              total={page.total}
-              pageSize={page.pageSize}
-              from={page.from}
-              to={page.to}
-              onPageChange={page.setPage}
-            />
-            {!fuelLogs.isLoading && !rows.length && (
-              <p className="px-4 py-8 text-center text-sm text-gray-500">No fuel fill records for this machine.</p>
-            )}
-          </div>
-        </>
+        <UsageLedger rows={rows} target={selected?.avg_hours_per_liter} loading={fuelLogs.isLoading} />
       )}
     </section>
   );
@@ -1223,9 +1218,10 @@ export function MachineryFuelLogsHistoryPage() {
                 <th className="px-4 py-2.5">Vehicle No.</th>
                 <th className="px-4 py-2.5">Date</th>
                 <th className="px-4 py-2.5">Project</th>
-                <th className="px-4 py-2.5">Previous meter</th>
-                <th className="px-4 py-2.5">Current meter</th>
-                <th className="px-4 py-2.5">Quantity</th>
+                <th className="px-4 py-2.5">Start reading</th>
+                <th className="px-4 py-2.5">End reading</th>
+                <th className="px-4 py-2.5">Hrs used</th>
+                <th className="px-4 py-2.5">Diesel (L)</th>
                 <th className="px-4 py-2.5">Cost</th>
                 <th className="px-4 py-2.5">Photos</th>
               </tr>
@@ -1239,6 +1235,7 @@ export function MachineryFuelLogsHistoryPage() {
                   <DataTableCell>{item.project_name || "—"}</DataTableCell>
                   <DataTableCell>{item.previous_meter_reading}</DataTableCell>
                   <DataTableCell>{item.current_meter_reading}</DataTableCell>
+                  <DataTableCell>{formatQty(item.hours_used ?? fuelUsageStats({ start: item.previous_meter_reading, end: item.current_meter_reading }).hours)}</DataTableCell>
                   <DataTableCell>{item.fuel_quantity} L</DataTableCell>
                   <DataTableCell>{item.fuel_cost == null || item.fuel_cost === "" ? "—" : formatCurrency(item.fuel_cost)}</DataTableCell>
                   <DataTableCell>

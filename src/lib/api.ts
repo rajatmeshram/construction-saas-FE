@@ -819,6 +819,7 @@ export const api = {
     machinery: number;
     previous_meter_reading: string;
     current_meter_reading: string;
+    hours_used?: string;
     fuel_quantity: string;
     fuel_cost?: string;
     logged_date: string;
@@ -829,6 +830,7 @@ export const api = {
     formData.append("machinery", String(payload.machinery));
     formData.append("previous_meter_reading", payload.previous_meter_reading);
     formData.append("current_meter_reading", payload.current_meter_reading);
+    if (payload.hours_used) formData.append("hours_used", payload.hours_used);
     formData.append("fuel_quantity", payload.fuel_quantity);
     if (payload.fuel_cost) formData.append("fuel_cost", payload.fuel_cost);
     formData.append("logged_date", payload.logged_date);

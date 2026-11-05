@@ -35,6 +35,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { api } from "@/lib/api";
+import { fuelUsageStats } from "@/lib/fuel-usage";
 import { useTablePage } from "@/lib/pagination";
 import { DashboardCharts } from "@/components/dashboard-charts";
 import {
@@ -1106,20 +1107,17 @@ function ProjectDetail({
                 </div>
                 <p className={`text-xs ${usage.over_consumption ? "text-red-700" : "text-gray-500"}`}>
                   {[
-                    usage.fuel_consumption != null ? `${usage.fuel_consumption}L` : null,
-                    usage.km_used != null ? `${usage.km_used} km` : null,
-                    usage.hours_used != null ? `${usage.hours_used}h` : null,
-                    usage.operator || "No operator",
+                    usage.fuel_consumption != null ? `${usage.fuel_consumption}L diesel` : null,
+                    usage.hours_used != null ? `${usage.hours_used} hrs` : null,
                     usage.usage_date || null,
                   ]
                     .filter(Boolean)
                     .join(" · ")}
                 </p>
-                {(usage.expected_km != null || usage.expected_hours != null) && (
+                {usage.expected_fuel != null && (
                   <p className={`mt-1 text-xs ${usage.over_consumption ? "text-red-600" : "text-gray-400"}`}>
-                    Expected for this fuel: {usage.expected_km != null ? `${usage.expected_km} km` : "—"}
-                    {" · "}
-                    {usage.expected_hours != null ? `${usage.expected_hours} hrs` : "—"}
+                    Expected diesel {usage.expected_fuel} L
+                    {usage.fuel_difference != null ? ` · difference ${usage.fuel_difference} L` : ""}
                   </p>
                 )}
               </div>
@@ -3222,10 +3220,10 @@ function OperationsManager({
   const [message, setMessage] = useState("");
   const [fuelModalOpen, setFuelModalOpen] = useState(false);
   const [machineModalOpen, setMachineModalOpen] = useState(false);
-  const [usageModalOpen, setUsageModalOpen] = useState(false);
-  const [editingUsage, setEditingUsage] = useState<MachineryUsage | null>(null);
   const [fuelMachineryId, setFuelMachineryId] = useState("");
   const [previousMeter, setPreviousMeter] = useState("");
+  const [endMeter, setEndMeter] = useState("");
+  const [hoursUsed, setHoursUsed] = useState("");
   const [machineryComplianceFilter, setMachineryComplianceFilter] = useState<MachineryComplianceKey>("all");
   const [machineryExpiryFilter, setMachineryExpiryFilter] = useState<MachineryExpiryKey>("all");
   const [machineryTypeFilter, setMachineryTypeFilter] = useState("all");
@@ -3248,12 +3246,6 @@ function OperationsManager({
     retry: false,
   });
   const fuelLogs = useQuery<Paginated<FuelLog>>({ queryKey: ["fuel-logs"], queryFn: () => api.fuelLogs(), retry: false });
-  const machineryUsageList = useQuery<Paginated<MachineryUsage>>({
-    queryKey: ["machinery-usage"],
-    queryFn: () => api.machineryUsage(),
-    retry: false,
-    enabled: module === "machinery",
-  });
   const reports = useQuery<OperationsReport>({ queryKey: ["reports"], queryFn: api.reports, retry: false });
 
   const onSuccess = (text: string, keys: string[]) => {
@@ -3354,39 +3346,6 @@ function OperationsManager({
     },
     onError,
   });
-  const createUsage = useMutation({
-    mutationFn: (payload: Parameters<typeof api.createMachineryUsage>[0]) => api.createMachineryUsage(payload),
-    onSuccess: (result) => {
-      if (result && typeof result === "object" && "queued" in result && result.queued) {
-        onSuccess(
-          ("detail" in result && typeof result.detail === "string" && result.detail) ||
-            "Submitted for primary supervisor / Super Admin approval.",
-          ["activity-requests", "reports", "machinery-usage"],
-        );
-        setUsageModalOpen(false);
-        return;
-      }
-      onSuccess("Machinery usage recorded.", ["reports", "machinery-usage"]);
-      setUsageModalOpen(false);
-      setEditingUsage(null);
-    },
-    onError,
-  });
-  const updateUsage = useMutation({
-    mutationFn: ({ id, payload }: { id: number; payload: Parameters<typeof api.updateMachineryUsage>[1] }) =>
-      api.updateMachineryUsage(id, payload),
-    onSuccess: () => {
-      onSuccess("Usage updated.", ["reports", "machinery-usage"]);
-      setUsageModalOpen(false);
-      setEditingUsage(null);
-    },
-    onError,
-  });
-  const deleteUsage = useMutation({
-    mutationFn: api.deleteMachineryUsage,
-    onSuccess: () => onSuccess("Usage removed.", ["reports", "machinery-usage"]),
-    onError,
-  });
   const createFuel = useMutation({
     mutationFn: (payload: Parameters<typeof api.createFuelLog>[0]) => api.createFuelLog(payload),
     onSuccess: (result) => {
@@ -3394,17 +3353,21 @@ function OperationsManager({
         onSuccess(
           ("detail" in result && typeof result.detail === "string" && result.detail) ||
             "Submitted for primary supervisor / Super Admin approval.",
-          ["activity-requests", "reports", "fuel-logs"],
+          ["activity-requests", "reports", "fuel-logs", "machinery-usage"],
         );
         setFuelModalOpen(false);
         setFuelMachineryId("");
         setPreviousMeter("");
+        setEndMeter("");
+        setHoursUsed("");
         return;
       }
-      onSuccess("Fuel log saved.", ["reports", "fuel-logs"]);
+      onSuccess("Fuel log saved. Usage row generated.", ["reports", "fuel-logs", "machinery-usage"]);
       setFuelModalOpen(false);
       setFuelMachineryId("");
       setPreviousMeter("");
+      setEndMeter("");
+      setHoursUsed("");
     },
     onError,
   });
@@ -3454,12 +3417,29 @@ function OperationsManager({
     return matchesMachineryCompliance(item, machineryComplianceFilter, machineryExpiryFilter);
   });
   const fuelLogList = fuelLogs.data?.results ?? [];
-  const usageList = machineryUsageList.data?.results ?? [];
+  const generatedUsage = useMemo(() => {
+    return [...fuelLogList]
+      .map((item) => {
+        const machine = machineryList.find((row) => row.id === item.machinery);
+        return {
+          item,
+          target: machine?.avg_hours_per_liter,
+          stats: fuelUsageStats({
+            fuel: item.fuel_quantity,
+            start: item.previous_meter_reading,
+            end: item.current_meter_reading,
+            hoursUsed: item.hours_used,
+            targetLph: machine?.avg_hours_per_liter,
+          }),
+        };
+      })
+      .sort((a, b) => String(b.item.logged_date).localeCompare(String(a.item.logged_date)));
+  }, [fuelLogList, machineryList]);
   const fuelPage = useTablePage(fuelLogList, { resetKey: machinerySection });
   const machineryPage = useTablePage(filteredMachineryList, {
     resetKey: `${machineryComplianceFilter}-${machineryExpiryFilter}-${machineryTypeFilter}-${machineryVehicleQuery}`,
   });
-  const usagePage = useTablePage(usageList, { resetKey: "usage" });
+  const usagePage = useTablePage(generatedUsage, { resetKey: "usage" });
   const machineryPageIds = machineryPage.pageRows.map((item) => item.id);
   const allMachineryPageSelected =
     machineryPageIds.length > 0 && machineryPageIds.every((id) => selectedMachinery.includes(id));
@@ -3526,6 +3506,8 @@ function OperationsManager({
 
   async function onFuelMachineryChange(machineryId: string) {
     setFuelMachineryId(machineryId);
+    setEndMeter("");
+    setHoursUsed("");
     if (!machineryId) {
       setPreviousMeter("");
       return;
@@ -3536,6 +3518,17 @@ function OperationsManager({
     } catch {
       setPreviousMeter("0");
     }
+  }
+
+  function onFuelReadingChange(start: string, end: string) {
+    setPreviousMeter(start);
+    setEndMeter(end);
+    if (start === "" || end === "") {
+      setHoursUsed("");
+      return;
+    }
+    const hours = Number(end) - Number(start);
+    setHoursUsed(Number.isFinite(hours) ? hours.toFixed(2) : "");
   }
 
   return (
@@ -3790,9 +3783,11 @@ function OperationsManager({
                       <th className="px-4 py-2.5">Machine</th>
                       <th className="px-4 py-2.5">Vehicle No.</th>
                       <th className="px-4 py-2.5">Project</th>
-                      <th className="px-4 py-2.5">Quantity</th>
+                      <th className="px-4 py-2.5">Diesel</th>
                       <th className="px-4 py-2.5">Cost</th>
-                      <th className="px-4 py-2.5">Meter</th>
+                      <th className="px-4 py-2.5">Start reading</th>
+                      <th className="px-4 py-2.5">End reading</th>
+                      <th className="px-4 py-2.5">Hrs used</th>
                       <th className="px-4 py-2.5">Photos</th>
                     </tr>
                   </DataTableHead>
@@ -3805,8 +3800,14 @@ function OperationsManager({
                         <DataTableCell>{item.project_name || "—"}</DataTableCell>
                         <DataTableCell>{item.fuel_quantity} L</DataTableCell>
                         <DataTableCell>{item.fuel_cost == null || item.fuel_cost === "" ? "—" : formatCurrency(item.fuel_cost)}</DataTableCell>
-                        <DataTableCell className="text-xs text-gray-500">
-                          {item.previous_meter_reading} → {item.current_meter_reading}
+                        <DataTableCell>{item.previous_meter_reading}</DataTableCell>
+                        <DataTableCell>{item.current_meter_reading}</DataTableCell>
+                        <DataTableCell>
+                          {fuelUsageStats({
+                            start: item.previous_meter_reading,
+                            end: item.current_meter_reading,
+                            hoursUsed: item.hours_used,
+                          }).hours}
                         </DataTableCell>
                         <DataTableCell>
                           {item.images.length ? (
@@ -3831,7 +3832,7 @@ function OperationsManager({
                     ))}
                     {!fuelLogList.length && (
                       <tr>
-                        <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-500">
+                        <td colSpan={10} className="px-4 py-10 text-center text-sm text-gray-500">
                           No fuel logs yet. Click &quot;Add Fuel Log&quot; to create one.
                         </td>
                       </tr>
@@ -3952,13 +3953,13 @@ function OperationsManager({
                       <th className="px-4 py-2.5">Vehicle</th>
                       <th className="px-4 py-2.5">Insurance</th>
                       <th className="px-4 py-2.5">Fitness</th>
-                      <th className="px-4 py-2.5">PUC</th>
                       <th className="px-4 py-2.5">MV tax</th>
                       <th className="px-4 py-2.5">Green tax</th>
-                      <th className="px-4 py-2.5">Permit</th>
+                      <th className="px-4 py-2.5">PUC</th>
                       <th className="px-4 py-2.5">HSRP</th>
                       <th className="px-4 py-2.5">Driver</th>
                       <th className="px-4 py-2.5">Status</th>
+                      <th className="px-4 py-2.5">Validity</th>
                       <th className="px-4 py-2.5">Actions</th>
                     </tr>
                   </DataTableHead>
@@ -4015,6 +4016,20 @@ function OperationsManager({
                           />
                         </DataTableCell>
                         <DataTableCell>
+                          <OptionalExpiryCell
+                            date={item.mv_tax_validity_date}
+                            downloadHref={machineryDocHref(item, "MV_TAX")}
+                            downloadLabel="MV tax"
+                          />
+                        </DataTableCell>
+                        <DataTableCell>
+                          <OptionalExpiryCell
+                            date={item.green_tax_date}
+                            downloadHref={machineryDocHref(item, "GREEN_TAX")}
+                            downloadLabel="green tax"
+                          />
+                        </DataTableCell>
+                        <DataTableCell>
                           <div className="flex flex-col items-start gap-1">
                             <span className="text-xs text-gray-600">{formatShortDate(item.puc_date)}</span>
                             {item.puc_date ? (
@@ -4034,18 +4049,11 @@ function OperationsManager({
                           </div>
                         </DataTableCell>
                         <DataTableCell>
-                          <OptionalExpiryCell
-                            date={item.mv_tax_validity_date}
-                            downloadHref={machineryDocHref(item, "MV_TAX")}
-                            downloadLabel="MV tax"
-                          />
+                          <Badge tone={item.hsrp_done ? "green" : "amber"}>{item.hsrp_done ? "Done" : "Pending"}</Badge>
                         </DataTableCell>
+                        <DataTableCell className="text-sm text-gray-700">{item.driver_name || "—"}</DataTableCell>
                         <DataTableCell>
-                          <OptionalExpiryCell
-                            date={item.green_tax_date}
-                            downloadHref={machineryDocHref(item, "GREEN_TAX")}
-                            downloadLabel="green tax"
-                          />
+                          <Badge tone={item.active ? "green" : "gray"}>{item.active ? "Active" : "Inactive"}</Badge>
                         </DataTableCell>
                         <DataTableCell>
                           <OptionalExpiryCell
@@ -4053,13 +4061,6 @@ function OperationsManager({
                             downloadHref={machineryDocHref(item, "PERMIT")}
                             downloadLabel="permit"
                           />
-                        </DataTableCell>
-                        <DataTableCell>
-                          <Badge tone={item.hsrp_done ? "green" : "amber"}>{item.hsrp_done ? "Done" : "Pending"}</Badge>
-                        </DataTableCell>
-                        <DataTableCell className="text-sm text-gray-700">{item.driver_name || "—"}</DataTableCell>
-                        <DataTableCell>
-                          <Badge tone={item.active ? "green" : "gray"}>{item.active ? "Active" : "Inactive"}</Badge>
                         </DataTableCell>
                         <DataTableCell>
                           <button
@@ -4116,102 +4117,48 @@ function OperationsManager({
                       <History className="h-4 w-4" />
                       View detail history
                     </Link>
-                    <p className="text-sm text-gray-500">{usageList.length} usage entries</p>
+                    <p className="text-sm text-gray-500">{generatedUsage.length} usage rows from fuel logs</p>
                   </div>
-                  <button
-                    type="button"
-                    className={btnPrimaryClass}
-                    onClick={() => {
-                      setEditingUsage(null);
-                      setUsageModalOpen(true);
-                    }}
-                  >
-                    + Add Usage
-                  </button>
                 </Toolbar>
                 <DataTable>
                   <DataTableHead>
                     <tr>
                       <th className="px-4 py-2.5">Date</th>
                       <th className="px-4 py-2.5">Machine</th>
-                      <th className="px-4 py-2.5">Project</th>
-                      <th className="px-4 py-2.5">Fuel</th>
-                      <th className="px-4 py-2.5">KM</th>
-                      <th className="px-4 py-2.5">Hours</th>
-                      <th className="px-4 py-2.5">Efficiency</th>
-                      <th className="px-4 py-2.5">Actions</th>
+                      <th className="px-4 py-2.5">Site</th>
+                      <th className="px-4 py-2.5">Diesel</th>
+                      <th className="px-4 py-2.5">Start</th>
+                      <th className="px-4 py-2.5">End</th>
+                      <th className="px-4 py-2.5">Hrs used</th>
+                      <th className="px-4 py-2.5">Actual L/hr</th>
+                      <th className="px-4 py-2.5">Expected</th>
+                      <th className="px-4 py-2.5">Difference</th>
                     </tr>
                   </DataTableHead>
                   <DataTableBody>
-                    {usagePage.pageRows.map((usage, i) => (
-                      <DataTableRow key={usage.id} zebra={i % 2 === 1}>
-                        <DataTableCell>{usage.usage_date || "—"}</DataTableCell>
-                        <DataTableCell className="font-medium text-gray-900">
-                          <p>{usage.machinery_name}</p>
-                          <p className="text-xs font-normal text-gray-500">{usage.operator || "No operator"}</p>
-                        </DataTableCell>
-                        <DataTableCell>{usage.project_name || "—"}</DataTableCell>
-                        <DataTableCell>{usage.fuel_consumption != null ? `${usage.fuel_consumption} L` : "—"}</DataTableCell>
-                        <DataTableCell className={usage.km_over_consumption ? "font-semibold text-red-700" : undefined}>
-                          {usage.km_used != null ? `${usage.km_used} km` : "—"}
-                          {usage.expected_km != null ? (
-                            <p className={`text-xs ${usage.km_over_consumption ? "text-red-600" : "text-gray-500"}`}>
-                              expected {usage.expected_km} km
-                            </p>
-                          ) : null}
-                        </DataTableCell>
-                        <DataTableCell className={usage.hours_over_consumption ? "font-semibold text-red-700" : undefined}>
-                          {usage.hours_used != null ? `${usage.hours_used} h` : "—"}
-                          {usage.expected_hours != null ? (
-                            <p className={`text-xs ${usage.hours_over_consumption ? "text-red-600" : "text-gray-500"}`}>
-                              expected {usage.expected_hours} h
-                            </p>
-                          ) : null}
-                        </DataTableCell>
-                        <DataTableCell>
-                          {usage.over_consumption ? (
-                            <Badge tone="red">Over consumption</Badge>
-                          ) : Number(usage.fuel_consumption) > 0 ? (
-                            <Badge tone="green">Normal</Badge>
-                          ) : (
-                            <span className="text-xs text-gray-400">—</span>
-                          )}
-                        </DataTableCell>
-                        <DataTableCell>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              aria-label={`Edit usage ${usage.id}`}
-                              title="Edit"
-                              className="inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-700 hover:bg-gray-50"
-                              onClick={() => {
-                                setEditingUsage(usage);
-                                setUsageModalOpen(true);
-                              }}
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`Delete usage ${usage.id}`}
-                              title="Delete"
-                              className="inline-flex items-center justify-center rounded-md border border-red-200 bg-red-50 p-1.5 text-red-700 hover:bg-red-100 disabled:opacity-60"
-                              disabled={deleteUsage.isPending}
-                              onClick={() => {
-                                if (!window.confirm("Delete this usage entry?")) return;
-                                deleteUsage.mutate(usage.id);
-                              }}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </DataTableCell>
-                      </DataTableRow>
-                    ))}
-                    {!usageList.length && (
+                    {usagePage.pageRows.map(({ item, stats, target }, i) => {
+                      const loss = stats.difference != null && stats.difference > 0;
+                      return (
+                        <DataTableRow key={item.id} zebra={i % 2 === 1}>
+                          <DataTableCell>{item.logged_date}</DataTableCell>
+                          <DataTableCell className="font-medium text-gray-900">{item.machinery_name}</DataTableCell>
+                          <DataTableCell>{item.project_name || "—"}</DataTableCell>
+                          <DataTableCell>{stats.diesel} L</DataTableCell>
+                          <DataTableCell>{item.previous_meter_reading}</DataTableCell>
+                          <DataTableCell>{item.current_meter_reading}</DataTableCell>
+                          <DataTableCell>{stats.hours}</DataTableCell>
+                          <DataTableCell>{stats.actualAvg.toFixed(2)}</DataTableCell>
+                          <DataTableCell>{stats.expectedFuel != null ? stats.expectedFuel.toFixed(2) : "—"}</DataTableCell>
+                          <DataTableCell className={loss ? "font-semibold text-red-700" : stats.difference != null ? "text-green-700" : undefined}>
+                            {stats.difference != null ? stats.difference.toFixed(2) : target ? "—" : "Set target"}
+                          </DataTableCell>
+                        </DataTableRow>
+                      );
+                    })}
+                    {!generatedUsage.length && (
                       <tr>
-                        <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-500">
-                          No usage logs yet. Click &quot;Add Usage&quot; to create one.
+                        <td colSpan={10} className="px-4 py-10 text-center text-sm text-gray-500">
+                          No usage yet. Add a fuel log and the usage row is created automatically.
                         </td>
                       </tr>
                     )}
@@ -4276,11 +4223,13 @@ function OperationsManager({
           <Modal
             open={fuelModalOpen}
             title="Add Fuel Log"
-            subtitle="Previous meter fills from the last fuel entry for that machine"
+            subtitle="Start reading fills from the last end reading for that machine"
             onClose={() => {
               setFuelModalOpen(false);
               setFuelMachineryId("");
               setPreviousMeter("");
+              setEndMeter("");
+              setHoursUsed("");
             }}
             footer={
               <>
@@ -4291,6 +4240,8 @@ function OperationsManager({
                     setFuelModalOpen(false);
                     setFuelMachineryId("");
                     setPreviousMeter("");
+                    setEndMeter("");
+                    setHoursUsed("");
                   }}
                 >
                   Cancel
@@ -4313,8 +4264,9 @@ function OperationsManager({
                 createFuel.mutate({
                   project: projectVal ? Number(projectVal) : undefined,
                   machinery: Number(form.get("machinery")),
-                  previous_meter_reading: formValue(form, "previous_meter_reading"),
-                  current_meter_reading: formValue(form, "current_meter_reading"),
+                  previous_meter_reading: previousMeter,
+                  current_meter_reading: endMeter,
+                  hours_used: hoursUsed,
                   fuel_quantity: formValue(form, "fuel_quantity"),
                   fuel_cost: formValue(form, "fuel_cost") || undefined,
                   logged_date: formValue(form, "logged_date"),
@@ -4340,111 +4292,50 @@ function OperationsManager({
                 </select>
               </FormRow>
               <FormRow label="Date"><input className={inputClass} name="logged_date" type="date" required /></FormRow>
-              <FormRow label="Previous meter">
+              <FormRow label="Start reading">
                 <input
                   className={inputClass}
                   name="previous_meter_reading"
                   type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
                   required
                   value={previousMeter}
-                  onChange={(event) => setPreviousMeter(event.target.value)}
+                  onChange={(event) => onFuelReadingChange(event.target.value, endMeter)}
                 />
               </FormRow>
-              <FormRow label="Current meter"><input className={inputClass} name="current_meter_reading" type="number" required /></FormRow>
+              <FormRow label="End reading">
+                <input
+                  className={inputClass}
+                  name="current_meter_reading"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  required
+                  value={endMeter}
+                  onChange={(event) => onFuelReadingChange(previousMeter, event.target.value)}
+                />
+              </FormRow>
+              <FormRow label="Hrs used">
+                <input
+                  className={inputClass}
+                  name="hours_used"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  required
+                  value={hoursUsed}
+                  onChange={(event) => setHoursUsed(event.target.value)}
+                />
+              </FormRow>
               <FormRow label="Fuel quantity"><input className={inputClass} name="fuel_quantity" type="number" min="0" step="0.01" required /></FormRow>
               <FormRow label="Fuel cost"><input className={inputClass} name="fuel_cost" type="number" min="0" step="0.01" /></FormRow>
               <FormRow label="Bill photos">
                 <input className={inputClass} name="bill_photos" type="file" accept="image/*" multiple />
               </FormRow>
-            </form>
-          </Modal>
-
-          <Modal
-            open={usageModalOpen}
-            title={editingUsage ? "Edit Usage" : "Add Usage"}
-            subtitle="Log hours, km, and fuel. Over-consumption is flagged when efficiency is below the machine average."
-            onClose={() => {
-              setUsageModalOpen(false);
-              setEditingUsage(null);
-            }}
-            footer={
-              <>
-                <button
-                  type="button"
-                  className={btnSecondaryClass}
-                  onClick={() => {
-                    setUsageModalOpen(false);
-                    setEditingUsage(null);
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  form="usage-form"
-                  className={btnPrimaryClass}
-                  disabled={createUsage.isPending || updateUsage.isPending}
-                >
-                  {createUsage.isPending || updateUsage.isPending ? "Saving..." : editingUsage ? "Update Usage" : "Save Usage"}
-                </button>
-              </>
-            }
-          >
-            <form
-              key={editingUsage?.id ?? "new"}
-              id="usage-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const form = new FormData(event.currentTarget);
-                const payload = {
-                  project: form.get("project") ? Number(form.get("project")) : editingUsage ? null : undefined,
-                  machinery: Number(form.get("machinery")),
-                  operator: formValue(form, "operator"),
-                  hours_used: formValue(form, "hours_used") || (editingUsage ? null : undefined),
-                  km_used: formValue(form, "km_used") || (editingUsage ? null : undefined),
-                  fuel_consumption: formValue(form, "fuel_consumption") || (editingUsage ? null : undefined),
-                  usage_date: formValue(form, "usage_date") || (editingUsage ? null : undefined),
-                };
-                if (editingUsage) {
-                  updateUsage.mutate({ id: editingUsage.id, payload });
-                  return;
-                }
-                createUsage.mutate({
-                  project: payload.project ?? undefined,
-                  machinery: payload.machinery,
-                  operator: payload.operator,
-                  hours_used: payload.hours_used ?? undefined,
-                  km_used: payload.km_used ?? undefined,
-                  fuel_consumption: payload.fuel_consumption ?? undefined,
-                  usage_date: payload.usage_date ?? undefined,
-                });
-              }}
-            >
-              <FormRow label="Project">
-                <select className={inputClass} name="project" defaultValue={editingUsage?.project ?? ""}>
-                  <option value="">No project (optional)</option>
-                  {projectList.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.code} - {project.name}
-                    </option>
-                  ))}
-                </select>
-              </FormRow>
-              <FormRow label="Machine">
-                <select className={inputClass} name="machinery" required defaultValue={editingUsage?.machinery ?? ""}>
-                  <option value="">Select machine</option>
-                  {machineryList.filter((item) => item.active || item.id === editingUsage?.machinery).map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}{item.vehicle_number ? ` - ${item.vehicle_number}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </FormRow>
-              <FormRow label="Operator"><input className={inputClass} name="operator" defaultValue={editingUsage?.operator || ""} /></FormRow>
-              <FormRow label="Hours used"><input className={inputClass} name="hours_used" type="number" min="0" step="0.1" defaultValue={editingUsage?.hours_used ?? ""} /></FormRow>
-              <FormRow label="KM used"><input className={inputClass} name="km_used" type="number" min="0" step="0.1" defaultValue={editingUsage?.km_used ?? ""} /></FormRow>
-              <FormRow label="Fuel (liters)"><input className={inputClass} name="fuel_consumption" type="number" min="0" step="0.1" defaultValue={editingUsage?.fuel_consumption ?? ""} /></FormRow>
-              <FormRow label="Date"><input className={inputClass} name="usage_date" type="date" defaultValue={editingUsage?.usage_date ?? ""} /></FormRow>
             </form>
           </Modal>
 
@@ -4527,12 +4418,12 @@ function OperationsManager({
                 <FormRow label="Engine no."><input className={inputClass} name="engine_number" /></FormRow>
               </div>
               <div className="mt-4 border-t border-gray-100 pt-4">
-                <p className="text-sm font-semibold text-coal">Average fuel consumption</p>
-                <p className="mt-1 text-xs text-gray-500">Used to detect over-consumption on usage logs (1 liter baseline).</p>
+                <p className="text-sm font-semibold text-coal">Target fuel average</p>
+                <p className="mt-1 text-xs text-gray-500">Expected diesel = hours used × target average (litres per hour).</p>
               </div>
               <div className="grid gap-x-6 md:grid-cols-2">
-                <FormRow label="Avg km / liter"><input className={inputClass} name="avg_km_per_liter" type="number" min="0" step="0.1" placeholder="e.g. 4 = 1L covers 4 km" /></FormRow>
-                <FormRow label="Avg hrs / liter"><input className={inputClass} name="avg_hours_per_liter" type="number" min="0" step="0.1" placeholder="e.g. 4 = 1L covers 4 hours" /></FormRow>
+                <FormRow label="Avg km / liter"><input className={inputClass} name="avg_km_per_liter" type="number" min="0" step="0.01" placeholder="e.g. 4 km per litre" /></FormRow>
+                <FormRow label="Target average (L/hr)"><input className={inputClass} name="avg_hours_per_liter" type="number" min="0" step="0.01" placeholder="e.g. 4.75 litres per hour" /></FormRow>
               </div>
               <div className="mt-4 border-t border-gray-100 pt-4">
                 <p className="text-sm font-semibold text-coal">Insurance</p>
