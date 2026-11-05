@@ -3219,6 +3219,7 @@ function OperationsManager({
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
   const [fuelModalOpen, setFuelModalOpen] = useState(false);
+  const [editingFuel, setEditingFuel] = useState<FuelLog | null>(null);
   const [machineModalOpen, setMachineModalOpen] = useState(false);
   const [fuelMachineryId, setFuelMachineryId] = useState("");
   const [previousMeter, setPreviousMeter] = useState("");
@@ -3356,6 +3357,7 @@ function OperationsManager({
           ["activity-requests", "reports", "fuel-logs", "machinery-usage"],
         );
         setFuelModalOpen(false);
+        setEditingFuel(null);
         setFuelMachineryId("");
         setPreviousMeter("");
         setEndMeter("");
@@ -3364,11 +3366,31 @@ function OperationsManager({
       }
       onSuccess("Fuel log saved. Usage row generated.", ["reports", "fuel-logs", "machinery-usage"]);
       setFuelModalOpen(false);
+      setEditingFuel(null);
       setFuelMachineryId("");
       setPreviousMeter("");
       setEndMeter("");
       setHoursUsed("");
     },
+    onError,
+  });
+  const updateFuel = useMutation({
+    mutationFn: ({ id, payload }: { id: number; payload: Parameters<typeof api.updateFuelLog>[1] }) =>
+      api.updateFuelLog(id, payload),
+    onSuccess: () => {
+      onSuccess("Fuel log updated.", ["reports", "fuel-logs", "machinery-usage"]);
+      setFuelModalOpen(false);
+      setEditingFuel(null);
+      setFuelMachineryId("");
+      setPreviousMeter("");
+      setEndMeter("");
+      setHoursUsed("");
+    },
+    onError,
+  });
+  const deleteFuel = useMutation({
+    mutationFn: api.deleteFuelLog,
+    onSuccess: () => onSuccess("Fuel log removed.", ["reports", "fuel-logs", "machinery-usage"]),
     onError,
   });
   const createMaintenance = useMutation({
@@ -3474,7 +3496,7 @@ function OperationsManager({
     </select>
   );
   const fuelProjectSelect = (
-    <select className={inputClass} name="project">
+    <select className={inputClass} name="project" defaultValue={editingFuel?.project ?? ""}>
       <option value="">No project (optional)</option>
       {projectList.map((project) => (
         <option key={project.id} value={project.id}>
@@ -3506,6 +3528,7 @@ function OperationsManager({
 
   async function onFuelMachineryChange(machineryId: string) {
     setFuelMachineryId(machineryId);
+    if (editingFuel) return;
     setEndMeter("");
     setHoursUsed("");
     if (!machineryId) {
@@ -3518,6 +3541,41 @@ function OperationsManager({
     } catch {
       setPreviousMeter("0");
     }
+  }
+
+  function closeFuelModal() {
+    setFuelModalOpen(false);
+    setEditingFuel(null);
+    setFuelMachineryId("");
+    setPreviousMeter("");
+    setEndMeter("");
+    setHoursUsed("");
+  }
+
+  function openFuelEditor(item?: FuelLog) {
+    if (!item) {
+      setEditingFuel(null);
+      setFuelMachineryId("");
+      setPreviousMeter("");
+      setEndMeter("");
+      setHoursUsed("");
+      setFuelModalOpen(true);
+      return;
+    }
+    setEditingFuel(item);
+    setFuelMachineryId(String(item.machinery));
+    setPreviousMeter(item.previous_meter_reading || "");
+    setEndMeter(item.current_meter_reading || "");
+    setHoursUsed(
+      item.hours_used ??
+        String(
+          fuelUsageStats({
+            start: item.previous_meter_reading,
+            end: item.current_meter_reading,
+          }).hours,
+        ),
+    );
+    setFuelModalOpen(true);
   }
 
   function onFuelReadingChange(start: string, end: string) {
@@ -3772,7 +3830,7 @@ function OperationsManager({
                     </Link>
                     <p className="text-sm text-gray-500">{fuelLogList.length} fuel entries</p>
                   </div>
-                  <button type="button" className={btnPrimaryClass} onClick={() => setFuelModalOpen(true)}>
+                  <button type="button" className={btnPrimaryClass} onClick={() => openFuelEditor()}>
                     + Add Fuel Log
                   </button>
                 </Toolbar>
@@ -3789,6 +3847,7 @@ function OperationsManager({
                       <th className="px-4 py-2.5">End reading</th>
                       <th className="px-4 py-2.5">Hrs used</th>
                       <th className="px-4 py-2.5">Photos</th>
+                      <th className="px-4 py-2.5">Actions</th>
                     </tr>
                   </DataTableHead>
                   <DataTableBody>
@@ -3828,11 +3887,40 @@ function OperationsManager({
                             <span className="text-gray-400">—</span>
                           )}
                         </DataTableCell>
+                        <DataTableCell>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              aria-label={`Edit fuel log ${item.id}`}
+                              title="Edit"
+                              className="inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-700 hover:bg-gray-50"
+                              onClick={() => openFuelEditor(item)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Delete fuel log ${item.id}`}
+                              title="Delete"
+                              className="inline-flex items-center justify-center rounded-md border border-red-200 bg-red-50 p-1.5 text-red-700 hover:bg-red-100 disabled:opacity-60"
+                              disabled={deleteFuel.isPending}
+                              onClick={() => {
+                                const label = item.machinery_name || "this fuel log";
+                                if (!window.confirm(`Delete the fuel log for ${label} on ${item.logged_date}? Its usage row will also be removed.`)) {
+                                  return;
+                                }
+                                deleteFuel.mutate(item.id);
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </DataTableCell>
                       </DataTableRow>
                     ))}
                     {!fuelLogList.length && (
                       <tr>
-                        <td colSpan={10} className="px-4 py-10 text-center text-sm text-gray-500">
+                        <td colSpan={11} className="px-4 py-10 text-center text-sm text-gray-500">
                           No fuel logs yet. Click &quot;Add Fuel Log&quot; to create one.
                         </td>
                       </tr>
@@ -4222,37 +4310,22 @@ function OperationsManager({
 
           <Modal
             open={fuelModalOpen}
-            title="Add Fuel Log"
-            subtitle="Start reading fills from the last end reading for that machine"
-            onClose={() => {
-              setFuelModalOpen(false);
-              setFuelMachineryId("");
-              setPreviousMeter("");
-              setEndMeter("");
-              setHoursUsed("");
-            }}
+            title={editingFuel ? "Edit Fuel Log" : "Add Fuel Log"}
+            subtitle={editingFuel ? "Update this fill. The usage row is recalculated." : "Start reading fills from the last end reading for that machine"}
+            onClose={closeFuelModal}
             footer={
               <>
-                <button
-                  type="button"
-                  className={btnSecondaryClass}
-                  onClick={() => {
-                    setFuelModalOpen(false);
-                    setFuelMachineryId("");
-                    setPreviousMeter("");
-                    setEndMeter("");
-                    setHoursUsed("");
-                  }}
-                >
+                <button type="button" className={btnSecondaryClass} onClick={closeFuelModal}>
                   Cancel
                 </button>
-                <button type="submit" form="fuel-log-form" className={btnPrimaryClass} disabled={createFuel.isPending}>
-                  {createFuel.isPending ? "Saving..." : "Save"}
+                <button type="submit" form="fuel-log-form" className={btnPrimaryClass} disabled={createFuel.isPending || updateFuel.isPending}>
+                  {createFuel.isPending || updateFuel.isPending ? "Saving..." : editingFuel ? "Update" : "Save"}
                 </button>
               </>
             }
           >
             <form
+              key={editingFuel?.id ?? "new"}
               id="fuel-log-form"
               onSubmit={(event) => {
                 event.preventDefault();
@@ -4261,7 +4334,7 @@ function OperationsManager({
                   .getAll("bill_photos")
                   .filter((file): file is File => file instanceof File && file.size > 0);
                 const projectVal = form.get("project");
-                createFuel.mutate({
+                const payload = {
                   project: projectVal ? Number(projectVal) : undefined,
                   machinery: Number(form.get("machinery")),
                   previous_meter_reading: previousMeter,
@@ -4271,7 +4344,12 @@ function OperationsManager({
                   fuel_cost: formValue(form, "fuel_cost") || undefined,
                   logged_date: formValue(form, "logged_date"),
                   bill_photos: billPhotos.length ? billPhotos : undefined,
-                });
+                };
+                if (editingFuel) {
+                  updateFuel.mutate({ id: editingFuel.id, payload });
+                  return;
+                }
+                createFuel.mutate(payload);
               }}
             >
               <FormRow label="Project (optional)">{fuelProjectSelect}</FormRow>
@@ -4284,14 +4362,16 @@ function OperationsManager({
                   onChange={(event) => onFuelMachineryChange(event.target.value)}
                 >
                   <option value="">Select machine</option>
-                  {machineryList.filter((item) => item.active).map((item) => (
+                  {machineryList.filter((item) => item.active || item.id === editingFuel?.machinery).map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name}{item.vehicle_number ? ` - ${item.vehicle_number}` : ""}
                     </option>
                   ))}
                 </select>
               </FormRow>
-              <FormRow label="Date"><input className={inputClass} name="logged_date" type="date" required /></FormRow>
+              <FormRow label="Date">
+                <input className={inputClass} name="logged_date" type="date" required defaultValue={editingFuel?.logged_date?.slice(0, 10) ?? ""} />
+              </FormRow>
               <FormRow label="Start reading">
                 <input
                   className={inputClass}
@@ -4331,10 +4411,17 @@ function OperationsManager({
                   onChange={(event) => setHoursUsed(event.target.value)}
                 />
               </FormRow>
-              <FormRow label="Fuel quantity"><input className={inputClass} name="fuel_quantity" type="number" min="0" step="0.01" required /></FormRow>
-              <FormRow label="Fuel cost"><input className={inputClass} name="fuel_cost" type="number" min="0" step="0.01" /></FormRow>
+              <FormRow label="Fuel quantity">
+                <input className={inputClass} name="fuel_quantity" type="number" min="0" step="0.01" required defaultValue={editingFuel?.fuel_quantity ?? ""} />
+              </FormRow>
+              <FormRow label="Fuel cost">
+                <input className={inputClass} name="fuel_cost" type="number" min="0" step="0.01" defaultValue={editingFuel?.fuel_cost ?? ""} />
+              </FormRow>
               <FormRow label="Bill photos">
                 <input className={inputClass} name="bill_photos" type="file" accept="image/*" multiple />
+                {editingFuel?.images?.length ? (
+                  <p className="mt-1 text-xs text-gray-500">{editingFuel.images.length} photo{editingFuel.images.length === 1 ? "" : "s"} already saved. New files are added.</p>
+                ) : null}
               </FormRow>
             </form>
           </Modal>

@@ -826,17 +826,44 @@ export const api = {
     bill_photos?: File[];
   }) => {
     const formData = new FormData();
-    if (payload.project) formData.append("project", String(payload.project));
+    formData.append("project", payload.project ? String(payload.project) : "");
     formData.append("machinery", String(payload.machinery));
     formData.append("previous_meter_reading", payload.previous_meter_reading);
     formData.append("current_meter_reading", payload.current_meter_reading);
     if (payload.hours_used) formData.append("hours_used", payload.hours_used);
     formData.append("fuel_quantity", payload.fuel_quantity);
-    if (payload.fuel_cost) formData.append("fuel_cost", payload.fuel_cost);
+    formData.append("fuel_cost", payload.fuel_cost ?? "");
     formData.append("logged_date", payload.logged_date);
     payload.bill_photos?.forEach((file) => formData.append("bill_photos", file));
     return request<FuelLog>("/operations/fuel-logs/", { method: "POST", body: formData });
   },
+  updateFuelLog: (
+    id: number,
+    payload: {
+      project?: number;
+      machinery: number;
+      previous_meter_reading: string;
+      current_meter_reading: string;
+      hours_used?: string;
+      fuel_quantity: string;
+      fuel_cost?: string;
+      logged_date: string;
+      bill_photos?: File[];
+    },
+  ) => {
+    const formData = new FormData();
+    formData.append("project", payload.project ? String(payload.project) : "");
+    formData.append("machinery", String(payload.machinery));
+    formData.append("previous_meter_reading", payload.previous_meter_reading);
+    formData.append("current_meter_reading", payload.current_meter_reading);
+    if (payload.hours_used) formData.append("hours_used", payload.hours_used);
+    formData.append("fuel_quantity", payload.fuel_quantity);
+    formData.append("fuel_cost", payload.fuel_cost ?? "");
+    formData.append("logged_date", payload.logged_date);
+    payload.bill_photos?.forEach((file) => formData.append("bill_photos", file));
+    return request<FuelLog>(`/operations/fuel-logs/${id}/`, { method: "PATCH", body: formData });
+  },
+  deleteFuelLog: (id: number) => request<void>(`/operations/fuel-logs/${id}/`, { method: "DELETE" }),
   fuelLogs: (params?: { machinery?: number }) =>
     request<{ results?: FuelLog[] }>(
       `/operations/fuel-logs/${buildListQuery({ machinery: params?.machinery, page_size: 200 })}`,
